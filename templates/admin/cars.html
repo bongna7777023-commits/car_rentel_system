@@ -129,7 +129,7 @@
             </thead>
             <tbody class="divide-y divide-gray-200" id="carsTableBody">
                 {% for car in cars %}
-                <tr class="hover:bg-gray-50 car-row" data-index="{{ loop.index0 }}" style="display: {{ 'table-row' if loop.index0 < 8 else 'none' }}">
+                <tr class="hover:bg-gray-50 car-row" data-index="{{ loop.index0 }}">
                     <td class="px-6 py-4 text-sm text-gray-900">{{ car.id }}</td>
                     <td class="px-6 py-4">
                         <div class="flex items-center">
@@ -139,7 +139,11 @@
                     </td>
                     <td class="px-6 py-4 text-sm text-gray-900">{{ car.brand }}</td>
                     <td class="px-6 py-4 text-sm text-gray-900">{{ car.category }}</td>
-                    <td class="px-6 py-4 text-sm font-semibold text-gray-900">{{ (car.price_per_day if car.price_per_day else car.price)|int }}\u17db</td>
+                    <td class="px-6 py-4">
+                        {% set p = car.price_per_day if car.price_per_day else car.price %}
+                        <div class="text-sm font-semibold text-gray-900">${{ "%.0f"|format(p) }}</div>
+                        <div class="text-xs text-purple-600">{{ p|to_khr }}៛</div>
+                    </td>
                     <td class="px-6 py-4 text-sm text-gray-900">{{ car.seats }}</td>
                     <td class="px-6 py-4">
                         <span class="px-3 py-1 rounded-full text-xs font-semibold
@@ -169,13 +173,20 @@
     </div>
 </div>
 
-<!-- Load More Button -->
-<div class="mt-6 text-center" id="loadMoreContainer">
-    <button id="loadMoreBtn" onclick="loadMoreCars()" class="bg-purple-600 text-white px-8 py-3 rounded-lg hover:bg-purple-700 transition inline-flex items-center shadow-md">
-        <i class="fas fa-chevron-down mr-2"></i>
-        Load More Cars
-        <span id="loadMoreCount" class="ml-2 bg-purple-700 px-2 py-1 rounded-full text-xs"></span>
-    </button>
+<!-- Pagination -->
+<div class="mt-6 flex flex-col sm:flex-row items-center justify-between gap-4" id="paginationContainer">
+    <div class="text-sm text-gray-600" id="resultInfo">Showing 0 of 0 cars</div>
+    <div class="flex items-center gap-2">
+        <button id="prevPageBtn" onclick="goToPage(currentPage - 1)" disabled
+            class="px-4 py-2 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-100 transition disabled:opacity-40 disabled:cursor-not-allowed">
+            <i class="fas fa-chevron-left mr-1"></i>Prev
+        </button>
+        <div id="pageNumbers" class="flex items-center gap-1"></div>
+        <button id="nextPageBtn" onclick="goToPage(currentPage + 1)"
+            class="px-4 py-2 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-100 transition disabled:opacity-40 disabled:cursor-not-allowed">
+            Next<i class="fas fa-chevron-right ml-1"></i>
+        </button>
+    </div>
 </div>
 
 <script>
@@ -415,91 +426,17 @@ function quickView(carId) {
         });
 }
 
-// Pagination - Load More Functionality
-let currentlyShown = 8;
+// Pagination
 const ITEMS_PER_PAGE = 8;
-const allRows = document.querySelectorAll('.car-row');
-const loadMoreBtn = document.getElementById('loadMoreBtn');
-const loadMoreCount = document.getElementById('loadMoreCount');
+let currentPage = 1;
+let filteredRows = [];
 
-function loadMoreCars() {
-    let loaded = 0;
-    
-    allRows.forEach((row, index) => {
-        if (index >= currentlyShown && index < currentlyShown + ITEMS_PER_PAGE) {
-            // Check if row matches current filters
-            const searchTerm = searchInput.value.toLowerCase();
-            const selectedCategory = categoryFilter.value.toLowerCase();
-            const selectedStatus = statusFilter.value.toLowerCase();
-            
-            const carName = row.querySelector('td:nth-child(2)').textContent.toLowerCase();
-            const brand = row.querySelector('td:nth-child(3)').textContent.toLowerCase();
-            const category = row.querySelector('td:nth-child(4)').textContent.toLowerCase();
-            const status = row.querySelector('td:nth-child(7)').textContent.toLowerCase();
-            
-            const matchesSearch = carName.includes(searchTerm) || brand.includes(searchTerm) || category.includes(searchTerm);
-            const matchesCategory = !selectedCategory || category.includes(selectedCategory);
-            const matchesStatus = !selectedStatus || status.includes(selectedStatus);
-            
-            if (matchesSearch && matchesCategory && matchesStatus) {
-                row.style.display = 'table-row';
-                loaded++;
-            }
-        }
-    });
-    
-    currentlyShown += ITEMS_PER_PAGE;
-    updateLoadMoreButton();
-    
-    // Smooth scroll animation
-    if (loaded > 0) {
-        showNotification(`Loaded ${loaded} more cars`, 'success');
-    }
-}
-
-function updateLoadMoreButton() {
-    let hiddenCount = 0;
-    
-    allRows.forEach((row, index) => {
-        if (row.style.display === 'none' || index >= currentlyShown) {
-            hiddenCount++;
-        }
-    });
-    
-    if (hiddenCount === 0) {
-        loadMoreBtn.style.display = 'none';
-    } else {
-        loadMoreBtn.style.display = 'inline-flex';
-        const remaining = Math.min(ITEMS_PER_PAGE, hiddenCount);
-        loadMoreCount.textContent = `+${remaining}`;
-    }
-}
-
-function resetPagination() {
-    currentlyShown = 8;
-    allRows.forEach((row, index) => {
-        if (index < 8) {
-            row.style.display = 'table-row';
-        } else {
-            row.style.display = 'none';
-        }
-    });
-    updateLoadMoreButton();
-}
-
-// Update filter function to work with pagination
-const originalFilterTable = filterTable;
-filterTable = function() {
-    // Reset pagination when filtering
-    currentlyShown = 8;
-    
+function getFilteredRows() {
     const searchTerm = searchInput.value.toLowerCase();
     const selectedCategory = categoryFilter.value.toLowerCase();
     const selectedStatus = statusFilter.value.toLowerCase();
     
-    let visibleCount = 0;
-    
-    allRows.forEach((row, index) => {
+    return Array.from(allRows).filter(row => {
         const carName = row.querySelector('td:nth-child(2)').textContent.toLowerCase();
         const brand = row.querySelector('td:nth-child(3)').textContent.toLowerCase();
         const category = row.querySelector('td:nth-child(4)').textContent.toLowerCase();
@@ -509,25 +446,91 @@ filterTable = function() {
         const matchesCategory = !selectedCategory || category.includes(selectedCategory);
         const matchesStatus = !selectedStatus || status.includes(selectedStatus);
         
-        if (matchesSearch && matchesCategory && matchesStatus) {
-            // Show only first 8 matching items
-            if (visibleCount < 8) {
-                row.style.display = 'table-row';
-            } else {
-                row.style.display = 'none';
-            }
-            visibleCount++;
-        } else {
-            row.style.display = 'none';
-        }
+        return matchesSearch && matchesCategory && matchesStatus;
     });
+}
+
+function renderPage() {
+    filteredRows = getFilteredRows();
+    const totalPages = Math.max(1, Math.ceil(filteredRows.length / ITEMS_PER_PAGE));
     
-    updateResultCount(visibleCount);
-    updateLoadMoreButton();
+    if (currentPage > totalPages) currentPage = totalPages;
+    if (currentPage < 1) currentPage = 1;
+    
+    const start = (currentPage - 1) * ITEMS_PER_PAGE;
+    const end = start + ITEMS_PER_PAGE;
+    
+    allRows.forEach(row => row.style.display = 'none');
+    
+    const pageRows = filteredRows.slice(start, end);
+    pageRows.forEach(row => { row.style.display = 'table-row'; });
+    
+    document.getElementById('resultInfo').textContent = `Showing ${start + 1}-${Math.min(end, filteredRows.length)} of ${filteredRows.length} cars`;
+    renderPagination(totalPages);
+}
+
+function renderPagination(totalPages) {
+    const pageNumbers = document.getElementById('pageNumbers');
+    const prevBtn = document.getElementById('prevPageBtn');
+    const nextBtn = document.getElementById('nextPageBtn');
+    
+    prevBtn.disabled = currentPage <= 1;
+    nextBtn.disabled = currentPage >= totalPages;
+    
+    pageNumbers.innerHTML = '';
+    
+    const maxVisible = 5;
+    let startPage = Math.max(1, currentPage - Math.floor(maxVisible / 2));
+    let endPage = Math.min(totalPages, startPage + maxVisible - 1);
+    if (endPage - startPage + 1 < maxVisible) {
+        startPage = Math.max(1, endPage - maxVisible + 1);
+    }
+    
+    if (startPage > 1) {
+        pageNumbers.appendChild(createPageBtn(1, '1'));
+        if (startPage > 2) pageNumbers.appendChild(createEllipsis());
+    }
+    
+    for (let i = startPage; i <= endPage; i++) {
+        pageNumbers.appendChild(createPageBtn(i, i.toString(), i === currentPage));
+    }
+    
+    if (endPage < totalPages) {
+        if (endPage < totalPages - 1) pageNumbers.appendChild(createEllipsis());
+        pageNumbers.appendChild(createPageBtn(totalPages, totalPages.toString()));
+    }
+}
+
+function createPageBtn(page, label, isActive) {
+    const btn = document.createElement('button');
+    btn.textContent = label;
+    btn.onclick = () => goToPage(page);
+    btn.className = `px-3 py-2 rounded-lg text-sm font-semibold transition ${
+        isActive ? 'bg-purple-600 text-white shadow-md' : 'text-gray-600 hover:bg-gray-100'
+    }`;
+    return btn;
+}
+
+function createEllipsis() {
+    const span = document.createElement('span');
+    span.textContent = '...';
+    span.className = 'px-2 text-gray-400';
+    return span;
+}
+
+function goToPage(page) {
+    currentPage = page;
+    renderPage();
+}
+
+// Override filter functions to use pagination
+const originalFilterTable = filterTable;
+filterTable = function() {
+    currentPage = 1;
+    renderPage();
 };
 
 // Initialize
-updateResultCount(tableRows.length);
-updateLoadMoreButton();
+renderPage();
 </script>
 {% endblock %}

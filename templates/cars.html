@@ -3,16 +3,42 @@
 {% block title %}Browse Cars - LuxeDrive{% endblock %}
 
 {% block content %}
-<!-- Weekend Discount Banner -->
-<div class="bg-gradient-to-r from-purple-600 via-pink-500 to-purple-600 text-white py-3">
+<!-- Promotional Banner -->
+{% if active_promotions %}
+<div class="bg-gradient-to-r from-purple-600 via-pink-500 to-purple-600 text-white py-3 animate-gradient">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="flex items-center justify-center gap-3 text-center">
-            <i class="fas fa-gift text-yellow-300 text-xl animate-bounce"></i>
-            <span class="font-bold">🎉 Weekend Special: 30% OFF Saturday & Sunday Rentals!</span>
-            <i class="fas fa-calendar-week text-yellow-300 text-xl"></i>
+        <div class="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-6 text-center">
+            <div class="flex items-center gap-2">
+                <i class="fas fa-gift text-yellow-300 text-xl animate-bounce"></i>
+                <span class="font-bold text-lg">Limited Time Offers!</span>
+            </div>
+            {% for promo in active_promotions %}
+            <span class="bg-white text-purple-600 px-4 py-2 rounded-full text-sm font-bold shadow-lg flex items-center gap-2">
+                {% if promo.discount_type == 'percentage' %}
+                <i class="fas fa-tag text-yellow-500"></i>{{ promo.discount_value }}% OFF
+                {% else %}
+                <i class="fas fa-tag text-yellow-500"></i>{{ promo.discount_value|to_khr }}៛ OFF
+                {% endif %}
+                {% if promo.code %}
+                — <span class="underline font-extrabold">{{ promo.code }}</span>
+                {% endif %}
+            </span>
+            {% endfor %}
         </div>
     </div>
 </div>
+<style>
+@keyframes gradient {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+.animate-gradient {
+    background-size: 200% 200%;
+    animation: gradient 3s ease infinite;
+}
+</style>
+{% endif %}
 
 <!-- Page Header -->
 <section class="gradient-bg text-white py-16">
@@ -55,23 +81,34 @@
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div class="mb-6">
             <p class="text-gray-600">
-                <span class="font-semibold text-gray-800">{{ cars|length }}</span> cars available
-                {% if selected_category != 'all' %}
+                {% if total_cars > 0 %}
+                <span class="font-semibold text-gray-800">Showing {{ ((page-1) * per_page) + 1 }}-{{ page * per_page if page * per_page <= total_cars else total_cars }}</span> of <span class="font-semibold text-gray-800">{{ total_cars }}</span> cars
+                {% else %}
+                <span class="font-semibold text-gray-800">0</span> cars
+                {% endif %}
+                {% if selected_category and selected_category != 'all' %}
                     in <span class="text-purple-600 font-semibold">{{ selected_category|title }}</span> category
                 {% endif %}
             </p>
         </div>
 
         {% if cars %}
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8" id="carsGrid">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
             {% for car in cars %}
-            <div class="car-card bg-white rounded-2xl shadow-lg overflow-hidden transform transition-all duration-300 hover:scale-105 hover:shadow-2xl" data-index="{{ loop.index0 }}">
+            <div class="car-card bg-white rounded-2xl shadow-lg overflow-hidden transform transition-all duration-300 hover:scale-105 hover:shadow-2xl">
                 <div class="relative h-56 overflow-hidden group">
                     <img src="{{ car.image }}" alt="{{ car.name }}" class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110">
                     <div class="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent opacity-0 group-hover:opacity-70 transition-opacity duration-300"></div>
                     <div class="absolute top-3 right-3 bg-purple-600 text-white px-3 py-1.5 rounded-full text-sm font-semibold shadow-lg">
                         {{ car.category }}
                     </div>
+                    {% if active_promotions %}
+                    <div class="absolute top-3 left-3">
+                        <span class="bg-gradient-to-r from-yellow-400 to-orange-500 text-white px-2.5 py-1 rounded-full text-xs font-bold shadow-lg animate-pulse">
+                            <i class="fas fa-tag mr-1"></i>PROMO
+                        </span>
+                    </div>
+                    {% endif %}
                     {% if car.color is defined %}
                     <div class="absolute top-3 left-3 bg-black bg-opacity-70 text-white px-3 py-1 rounded-full text-xs font-medium">
                         <i class="fas fa-palette mr-1"></i>{{ car.color }}
@@ -91,10 +128,10 @@
                         <span class="bg-gray-100 text-gray-600 px-2 py-1 rounded text-xs">{{ feature }}</span>
                         {% endfor %}
                     </div>
-                    <div class="flex justify-between items-center pt-3 border-t border-gray-100">
+                    <div class="flex justify-between items-end pt-3 border-t border-gray-100">
                         <div>
-                            <span class="text-2xl font-bold text-purple-600">${{ car.price }}</span>
-                            <span class="text-gray-500 text-sm">/day</span>
+                            <div class="text-2xl font-bold text-purple-600">${{ "%.0f"|format(car.price) }} <span class="text-sm font-normal text-gray-500">/day</span></div>
+                            <div class="text-sm text-gray-400 mt-0.5">≈ {{ car.price|to_khr }}៛</div>
                         </div>
                         <a href="/car/{{ car.id }}" class="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition text-sm font-semibold">
                             View Details
@@ -105,14 +142,53 @@
             {% endfor %}
         </div>
         
-        <!-- Load More Button -->
-        <div class="mt-8 text-center" id="loadMoreContainer">
-            <button id="loadMoreBtn" onclick="loadMoreCars()" class="bg-purple-600 text-white px-10 py-4 rounded-lg hover:bg-purple-700 transition inline-flex items-center shadow-lg text-lg font-semibold">
-                <i class="fas fa-chevron-down mr-3"></i>
-                Load More Cars
-                <span id="loadMoreCount" class="ml-3 bg-purple-700 px-3 py-1 rounded-full text-sm"></span>
-            </button>
-        </div>
+        {% if total_pages > 1 %}
+        <nav class="mt-10 flex justify-center" aria-label="Car pagination">
+            <ul class="flex items-center gap-1.5">
+                {% if page > 1 %}
+                <li>
+                    <a href="?page={{ page - 1 }}{% if selected_category and selected_category != 'all' %}&category={{ selected_category }}{% endif %}" class="flex items-center px-3 py-2 rounded-lg text-sm font-semibold text-purple-600 hover:bg-purple-50 transition">
+                        <i class="fas fa-chevron-left mr-1.5"></i>Previous
+                    </a>
+                </li>
+                {% endif %}
+                
+                {% set start = [1, page - 2]|max %}
+                {% set end = [total_pages, page + 2]|min %}
+                {% if start > 1 %}
+                <li>
+                    <a href="?page=1{% if selected_category and selected_category != 'all' %}&category={{ selected_category }}{% endif %}" class="flex items-center justify-center w-10 h-10 rounded-lg text-sm font-semibold text-gray-600 hover:bg-purple-50 hover:text-purple-600 transition">1</a>
+                </li>
+                {% if start > 2 %}
+                <li class="flex items-center px-2 text-gray-400 text-sm">...</li>
+                {% endif %}
+                {% endif %}
+                
+                {% for p in range(start, end + 1) %}
+                <li>
+                    <a href="?page={{ p }}{% if selected_category and selected_category != 'all' %}&category={{ selected_category }}{% endif %}" class="flex items-center justify-center w-10 h-10 rounded-lg text-sm font-semibold transition {% if p == page %}bg-purple-600 text-white shadow-md{% else %}text-gray-600 hover:bg-purple-50 hover:text-purple-600{% endif %}">{{ p }}</a>
+                </li>
+                {% endfor %}
+                
+                {% if end < total_pages %}
+                {% if end < total_pages - 1 %}
+                <li class="flex items-center px-2 text-gray-400 text-sm">...</li>
+                {% endif %}
+                <li>
+                    <a href="?page={{ total_pages }}{% if selected_category and selected_category != 'all' %}&category={{ selected_category }}{% endif %}" class="flex items-center justify-center w-10 h-10 rounded-lg text-sm font-semibold text-gray-600 hover:bg-purple-50 hover:text-purple-600 transition">{{ total_pages }}</a>
+                </li>
+                {% endif %}
+                
+                {% if page < total_pages %}
+                <li>
+                    <a href="?page={{ page + 1 }}{% if selected_category and selected_category != 'all' %}&category={{ selected_category }}{% endif %}" class="flex items-center px-3 py-2 rounded-lg text-sm font-semibold text-purple-600 hover:bg-purple-50 transition">
+                        Next<i class="fas fa-chevron-right ml-1.5"></i>
+                    </a>
+                </li>
+                {% endif %}
+            </ul>
+        </nav>
+        {% endif %}
         {% else %}
         <div class="text-center py-16">
             <i class="fas fa-car text-gray-300 text-6xl mb-4"></i>
@@ -154,72 +230,52 @@
         </div>
     </div>
 </section>
-{% endblock %}
 
-{% block extra_js %}
+<!-- Notification Toast -->
+<div id="notifToast" class="hidden fixed bottom-6 right-6 z-[70] max-w-sm bg-white rounded-xl shadow-2xl border border-gray-100 p-4 transform transition-all duration-500 translate-y-4 opacity-0">
+    <div class="flex items-start gap-3">
+        <div class="bg-gradient-to-br from-purple-100 to-pink-100 rounded-full p-2 flex-shrink-0">
+            <i class="fas fa-gift text-purple-600 text-lg"></i>
+        </div>
+        <div class="flex-1 min-w-0">
+            <p class="text-sm font-bold text-gray-800">🏷️ You have <span id="toastNotifCount">0</span> new promotion<span id="toastNotifPlural">s</span> available!</p>
+            <p class="text-xs text-gray-500 mt-0.5">Click the bell <i class="fas fa-bell mx-0.5"></i> icon to view</p>
+        </div>
+        <button onclick="dismissToast()" class="text-gray-400 hover:text-gray-600 flex-shrink-0">
+            <i class="fas fa-times"></i>
+        </button>
+    </div>
+</div>
+
 <script>
-// Load More Pagination
-let currentlyShown = 8;
-const ITEMS_PER_PAGE = 8;
-const allCarCards = document.querySelectorAll('.car-card');
-const loadMoreBtn = document.getElementById('loadMoreBtn');
-const loadMoreCount = document.getElementById('loadMoreCount');
-
-function loadMoreCars() {
-    let loaded = 0;
-    
-    allCarCards.forEach((card, index) => {
-        if (index >= currentlyShown && index < currentlyShown + ITEMS_PER_PAGE) {
-            card.style.display = 'block';
-            loaded++;
-            // Add animation
-            card.style.animation = 'fadeIn 0.5s ease-in';
-        }
-    });
-    
-    currentlyShown += ITEMS_PER_PAGE;
-    updateLoadMoreButton();
-    
-    // Smooth scroll to first newly loaded item
-    if (loaded > 0) {
-        setTimeout(() => {
-            const firstNewCard = allCarCards[currentlyShown - ITEMS_PER_PAGE];
-            if (firstNewCard) {
-                firstNewCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+(function() {
+    fetch('/api/check-session')
+        .then(r => r.json())
+        .then(data => {
+            if (data.logged_in && data.unread_notifications > 0) {
+                showToast(data.unread_notifications);
             }
-        }, 100);
-    }
+        })
+        .catch(() => {});
+})();
+let toastTimer = null;
+function showToast(count) {
+    const toast = document.getElementById('notifToast');
+    document.getElementById('toastNotifCount').textContent = count;
+    document.getElementById('toastNotifPlural').textContent = count > 1 ? 's' : '';
+    toast.classList.remove('hidden');
+    setTimeout(() => {
+        toast.classList.remove('translate-y-4', 'opacity-0');
+        toast.classList.add('translate-y-0', 'opacity-100');
+    }, 100);
+    toastTimer = setTimeout(dismissToast, 5000);
 }
-
-function updateLoadMoreButton() {
-    let hiddenCount = 0;
-    
-    allCarCards.forEach((card, index) => {
-        if (card.style.display === 'none' || index >= currentlyShown) {
-            hiddenCount++;
-        }
-    });
-    
-    if (hiddenCount === 0) {
-        document.getElementById('loadMoreContainer').style.display = 'none';
-    } else {
-        document.getElementById('loadMoreContainer').style.display = 'block';
-        const remaining = Math.min(ITEMS_PER_PAGE, hiddenCount);
-        loadMoreCount.textContent = `+${remaining}`;
-    }
+function dismissToast() {
+    const toast = document.getElementById('notifToast');
+    toast.classList.add('translate-y-4', 'opacity-0');
+    toast.classList.remove('translate-y-0', 'opacity-100');
+    setTimeout(() => toast.classList.add('hidden'), 500);
+    if (toastTimer) clearTimeout(toastTimer);
 }
-
-// Add fade in animation
-const style = document.createElement('style');
-style.textContent = `
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(20px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-`;
-document.head.appendChild(style);
-
-// Initialize on page load
-updateLoadMoreButton();
 </script>
 {% endblock %}

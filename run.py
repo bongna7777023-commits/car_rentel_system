@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash
 from datetime import datetime, timedelta
 import json
 import os
@@ -16,6 +16,10 @@ from uuid import uuid4
 load_dotenv(os.path.join(os.path.dirname(__file__), '../config/.env'))
 
 app = Flask(__name__)
+
+@app.template_filter('to_khr')
+def to_khr(usd):
+    return "{:,.0f}".format(usd * 4000)
 
 # Load secure configuration
 from app.config import get_config
@@ -444,11 +448,83 @@ def get_car_by_id(car_id):
             close_db_connection(conn)
 
 
+def get_cars_paginated(page=1, per_page=9, category=None):
+    conn = get_db_connection()
+    if not conn:
+        return [], 0, 0, 0
+    cursor = None
+    try:
+        cursor = conn.cursor(dictionary=True)
+        where = ""
+        params = []
+        if category and category.lower() != 'all':
+            where = " WHERE LOWER(category) = %s"
+            params.append(category.lower())
+        count_sql = "SELECT COUNT(*) as total FROM cars" + where
+        cursor.execute(count_sql, params)
+        total = cursor.fetchone()['total']
+        total_pages = max(1, (total + per_page - 1) // per_page)
+        offset = (page - 1) * per_page
+        data_sql = "SELECT * FROM cars" + where + " ORDER BY id LIMIT %s OFFSET %s"
+        cursor.execute(data_sql, params + [per_page, offset])
+        cars = cursor.fetchall()
+        cars = [normalize_car_record(car) for car in cars]
+        return cars, total, total_pages, page
+    except Error as e:
+        print(f"Error fetching paginated cars: {e}")
+        return [], 0, 0, 1
+    finally:
+        if cursor:
+            try: cursor.close()
+            except: pass
+        if conn:
+            try: close_db_connection(conn)
+            except: pass
+
+
+def get_active_promotions():
+    conn = get_db_connection()
+    if not conn:
+        return None
+    cursor = None
+    try:
+        cursor = conn.cursor(dictionary=True)
+        now = datetime.now().strftime('%Y-%m-%d')
+        cursor.execute("""
+            SELECT id, code, description, discount_type, discount_value,
+                   active_from, active_to, max_uses, uses_count, min_days
+            FROM promotions
+            WHERE is_active = 1
+              AND active_from <= %s
+              AND active_to >= %s
+              AND (max_uses IS NULL OR uses_count < max_uses)
+            ORDER BY active_to ASC
+            LIMIT 2
+        """, (now, now))
+        promos = cursor.fetchall()
+        return promos if promos else None
+    except Error as e:
+        print(f"Error fetching active promotions: {e}")
+        return None
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                close_db_connection(conn)
+            except:
+                pass
+
+
 # Home page route
 @app.route('/')
 def home():
     cars = get_all_cars()
-    return render_template('index.html', cars=cars)
+    active_promotions = get_active_promotions()
+    return render_template('index.html', cars=cars, active_promotions=active_promotions, featured_cars=cars[:6])
 
 
 @app.route('/about')
@@ -463,8 +539,14 @@ def contact():
 
 @app.route('/cars')
 def cars():
-    all_cars = get_all_cars()
-    return render_template('cars.html', cars=all_cars)
+    page = request.args.get('page', 1, type=int)
+    category = request.args.get('category', 'all')
+    per_page = 9
+    cars, total, total_pages, current_page = get_cars_paginated(page, per_page, category)
+    active_promotions = get_active_promotions()
+    return render_template('cars.html', cars=cars, active_promotions=active_promotions,
+                           page=current_page, total_pages=total_pages, total_cars=total,
+                           per_page=per_page, selected_category=category)
 
 
 @app.route('/car/<int:car_id>')
@@ -472,7 +554,8 @@ def car_detail(car_id):
     car = get_car_by_id(car_id)
     if not car:
         return "Car not found", 404
-    return render_template('car_detail.html', car=car)
+    active_promotions = get_active_promotions()
+    return render_template('car_detail.html', car=car, active_promotions=active_promotions)
 
 
 @app.route('/signup', methods=['GET', 'POST'])
@@ -588,7 +671,7 @@ def logout():
 
 @app.route('/bookings')
 def bookings():
-    if 'user_email' not in session:
+    if 'user_id' not in session:
         return redirect(url_for('login'))
 
     conn = get_db_connection()
@@ -604,22 +687,32 @@ def bookings():
                 b.booking_reference,
                 b.status,
                 b.total_cost,
-                b.created_at AS booking_date,
+                b.base_cost,
+                b.discount_amount,
+                b.discounts_applied,
                 b.start_date AS pickup_date,
                 b.end_date AS return_date,
-                DATEDIFF(b.end_date, b.start_date) AS days,
-                b.total_cost AS base_cost,
-                0 AS discount_amount,
-                '' AS discounts_applied,
+                b.pickup_location,
+                b.dropoff_location,
+                b.created_at AS booking_date,
+                b.days,
                 CONCAT(c.brand, ' ', c.model) AS car_name,
-                c.image_url AS car_image
+                c.image_url AS car_image,
+                c.id AS car_id,
+                u.username,
+                u.email,
+                u.first_name,
+                u.last_name,
+                u.phone,
+                p.code AS promo_code
             FROM bookings b
-            JOIN users u ON u.id = b.user_id
-            JOIN cars c ON c.id = b.car_id
-            WHERE u.email = %s
+            LEFT JOIN cars c ON c.id = b.car_id
+            LEFT JOIN users u ON u.id = b.user_id
+            LEFT JOIN promotions p ON p.id = b.promotion_id
+            WHERE b.user_id = %s
             ORDER BY b.created_at DESC
             """,
-            (session['user_email'],)
+            (session['user_id'],)
         )
         user_bookings = cursor.fetchall()
         return render_template('bookings.html', bookings=user_bookings)
@@ -627,9 +720,12 @@ def bookings():
         print(f"Error fetching bookings: {e}")
         return render_template('bookings.html', bookings=[], error="Error fetching bookings")
     finally:
-        if conn and conn.is_connected():
-            cursor.close()
-            close_db_connection(conn)
+        try:
+            if cursor:
+                cursor.close()
+        except Exception:
+            pass
+        close_db_connection(conn)
 
 
 @app.route('/book-car/<int:car_id>', methods=['GET', 'POST'])
@@ -652,10 +748,12 @@ def book_car(car_id):
             pickup_date = data.get('pickup_date')
             return_date = data.get('return_date')
             phone = data.get('phone', '')
+            promo_code = data.get('promo_code', '').strip().upper()
         else:
             pickup_date = request.form.get('pickup_date')
             return_date = request.form.get('return_date')
             phone = request.form.get('phone', '')
+            promo_code = request.form.get('promo_code', '').strip().upper()
 
         if not pickup_date or not return_date:
             if is_json:
@@ -687,17 +785,58 @@ def book_car(car_id):
 
             days = (return_dt - pickup).days
             base_cost = float(car['price']) * days
-            discount_amount = 0
-            discounts_applied = ""
+            promo_discount_amount = 0
+            promotion_id = None
+            discounts_applied = []
 
             is_new_account = user_is_new_account(session['user_id'])
             has_weekend_dates = booking_includes_weekend(pickup, return_dt - timedelta(days=1))
 
             if is_new_account and has_weekend_dates:
-                discount_amount = base_cost * 0.30
-                discounts_applied = "New Account Weekend Discount (30%)"
+                promo_discount_amount += base_cost * 0.30
+                discounts_applied.append("New Account Weekend Discount (30%)")
 
-            total_cost = base_cost - discount_amount
+            # Validate and apply promo code
+            if promo_code:
+                conn = get_db_connection()
+                if conn:
+                    cursor = None
+                    try:
+                        cursor = conn.cursor(dictionary=True)
+                        cursor.execute("SELECT * FROM promotions WHERE code = %s", (promo_code,))
+                        promo = cursor.fetchone()
+                        if promo and promo['is_active']:
+                            today_date = datetime.now().date()
+                            valid = True
+                            if promo['active_from'] and promo['active_from'] > today_date:
+                                valid = False
+                            if valid and promo['active_to'] and promo['active_to'] < today_date:
+                                valid = False
+                            if valid and promo['max_uses'] and promo['uses_count'] >= promo['max_uses']:
+                                valid = False
+                            if valid:
+                                promotion_id = promo['id']
+                                if promo['discount_type'] == 'percentage':
+                                    promo_value = float(promo['discount_value'])
+                                    promo_discount_amount += base_cost * promo_value / 100
+                                else:
+                                    promo_discount_amount += float(promo['discount_value'])
+                                discounts_applied.append(
+                                    f'Promo {promo["code"]} ({int(float(promo["discount_value"]))}% off)'
+                                    if promo['discount_type'] == 'percentage'
+                                    else f'Promo {promo["code"]} (${float(promo["discount_value"]):.2f} off)'
+                                )
+                    except Error:
+                        pass
+                    finally:
+                        try:
+                            if cursor:
+                                cursor.close()
+                        except Exception:
+                            pass
+                        close_db_connection(conn)
+
+            total_cost = base_cost - promo_discount_amount
 
             conn = get_db_connection()
             if not conn:
@@ -705,39 +844,75 @@ def book_car(car_id):
                     return jsonify({'success': False, 'message': 'Database connection failed'}), 500
                 return render_template('car_detail.html', car=car, error="Database connection failed")
 
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO bookings
-                (booking_reference, user_id, car_id, start_date, end_date, pickup_location,
-                 dropoff_location, status, total_cost, payment_status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                generate_booking_reference(),
-                session['user_id'],
-                car_id,
-                pickup_date,
-                return_date,
-                'Main Branch',
-                'Main Branch',
-                'confirmed',
-                total_cost,
-                'pending'
-            ))
-            conn.commit()
-            booking_id = cursor.lastrowid
-            cursor.close()
-            close_db_connection(conn)
+            try:
+                cursor = conn.cursor()
+                # Generate a unique booking reference
+                booking_reference = f"BK-{uuid4().hex[:10].upper()}"
+                
+                car_name = f"{car.get('brand', '')} {car.get('model', '')}".strip()
+                car_image = car.get('image_url') or car.get('image', '')
+                cursor.execute("""
+                    INSERT INTO bookings
+                    (booking_reference, user_id, car_id, start_date, end_date,
+                     pickup_location, dropoff_location, days, status, total_cost,
+                     base_cost, discount_amount, promotion_id,
+                     discounts_applied, user_email, user_name, phone,
+                     car_name, car_image, pickup_date, return_date)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    booking_reference,
+                    session.get('user_id'),
+                    car_id,
+                    pickup_date,
+                    return_date,
+                    'Main Branch',
+                    'Main Branch',
+                    days,
+                    'confirmed',
+                    total_cost,
+                    base_cost,
+                    promo_discount_amount,
+                    promotion_id,
+                    ','.join(discounts_applied) if discounts_applied else None,
+                    session.get('user_email', ''),
+                    session.get('user_name', ''),
+                    phone,
+                    car_name,
+                    car_image,
+                    pickup_date,
+                    return_date
+                ))
+                booking_id = cursor.lastrowid
+
+                # Increment uses_count if promo was applied
+                if promotion_id:
+                    cursor.execute("UPDATE promotions SET uses_count = uses_count + 1 WHERE id = %s", (promotion_id,))
+
+                conn.commit()
+            except Error as e:
+                print(f"Booking creation error: {e}")
+                conn.rollback()
+                if is_json:
+                    return jsonify({'success': False, 'message': 'Error creating booking'}), 500
+                return render_template('car_detail.html', car=car, error="Error creating booking")
+            finally:
+                try:
+                    if cursor:
+                        cursor.close()
+                except Exception:
+                    pass
+                close_db_connection(conn)
 
             if is_json:
-                discount_list = [item.strip() for item in discounts_applied.split(',') if item.strip()] if discounts_applied else []
                 return jsonify({
                     'success': True,
                     'message': 'Booking confirmed!',
                     'booking_id': booking_id,
                     'base_cost': base_cost,
                     'total_cost': total_cost,
-                    'discount_amount': discount_amount,
-                    'discounts_applied': discount_list
+                    'discount_amount': promo_discount_amount,
+                    'discounts_applied': discounts_applied
                 }), 200
             return redirect(url_for('bookings'))
 
@@ -1201,23 +1376,26 @@ def admin_bookings():
         cursor = conn.cursor(dictionary=True)
         cursor.execute("""
             SELECT
-                b.*,
-                u.email AS user_email,
-                CONCAT(u.first_name, ' ', u.last_name) AS user_name,
-                u.phone AS phone,
-                CONCAT(c.brand, ' ', c.model) AS car_name,
-                c.image_url AS car_image,
-                b.start_date AS pickup_date,
-                b.end_date AS return_date,
-                DATEDIFF(b.end_date, b.start_date) AS days,
-                b.created_at AS booking_date,
-                b.total_cost AS base_cost,
-                0 AS discount_amount,
-                '' AS discounts_applied
+                b.id,
+                b.user_email,
+                b.user_name,
+                b.phone,
+                b.car_id,
+                b.car_name,
+                b.car_image,
+                b.pickup_date,
+                b.return_date,
+                b.days,
+                b.base_cost,
+                b.discount_amount,
+                b.total_cost,
+                b.discounts_applied,
+                b.status,
+                b.booking_date,
+                p.code AS promo_code
             FROM bookings b
-            JOIN users u ON u.id = b.user_id
-            JOIN cars c ON c.id = b.car_id
-            ORDER BY b.created_at DESC
+            LEFT JOIN promotions p ON p.id = b.promotion_id
+            ORDER BY b.booking_date DESC
         """)
         bookings = cursor.fetchall()
 
@@ -1250,9 +1428,12 @@ def admin_bookings():
             error="Error fetching bookings"
         )
     finally:
-        if conn and conn.is_connected():
-            cursor.close()
-            close_db_connection(conn)
+        try:
+            if cursor:
+                cursor.close()
+        except Exception:
+            pass
+        close_db_connection(conn)
 
 
 @app.route('/admin/bookings/update/<int:booking_id>', methods=['POST'])
@@ -1307,6 +1488,266 @@ def admin_logout():
     return redirect(url_for('admin_login'))
 
 
+# Promotion / Discount Code routes
+@app.route('/admin/promotions')
+def admin_promotions():
+    if 'admin_id' not in session:
+        return redirect(url_for('admin_login'))
+
+    conn = get_db_connection()
+    if not conn:
+        flash('Database connection failed', 'error')
+        return render_template('admin/promotions.html', promotions=[])
+
+    cursor = None
+    try:
+        cursor = conn.cursor(dictionary=True)
+
+        search = request.args.get('search', '').strip()
+        status_filter = request.args.get('status', '').strip()
+
+        query = "SELECT * FROM promotions WHERE 1=1"
+        params = []
+
+        if search:
+            query += " AND (code LIKE %s OR description LIKE %s)"
+            params.extend([f"%{search}%", f"%{search}%"])
+
+        if status_filter == 'active':
+            query += " AND is_active = TRUE"
+        elif status_filter == 'inactive':
+            query += " AND is_active = FALSE"
+
+        query += " ORDER BY created_at DESC"
+
+        cursor.execute(query, params)
+        promotions = cursor.fetchall()
+
+        return render_template('admin/promotions.html', promotions=promotions)
+    except Error as e:
+        print(f"Error fetching promotions: {e}")
+        flash('Error loading promotions', 'error')
+        return render_template('admin/promotions.html', promotions=[])
+    finally:
+        try:
+            if cursor:
+                cursor.close()
+        except Exception:
+            pass
+        close_db_connection(conn)
+
+
+@app.route('/admin/promotions/create', methods=['GET', 'POST'])
+def admin_create_promotion():
+    if 'admin_id' not in session:
+        return redirect(url_for('admin_login'))
+
+    if request.method == 'POST':
+        code = request.form.get('code', '').strip().upper()
+        description = request.form.get('description', '').strip()
+        discount_type = request.form.get('discount_type', 'percentage')
+        discount_value = request.form.get('discount_value', 0)
+        active_from = request.form.get('active_from', '') or None
+        active_to = request.form.get('active_to', '') or None
+        max_uses = request.form.get('max_uses', '') or None
+        is_active = request.form.get('is_active') == 'on'
+
+        if not code:
+            flash('Promotion code is required', 'error')
+            return render_template('admin/promotion_form.html', promotion={})
+
+        try:
+            discount_value = float(discount_value)
+            if discount_value <= 0:
+                flash('Discount value must be positive', 'error')
+                return render_template('admin/promotion_form.html', promotion={})
+            if discount_type == 'percentage' and discount_value > 100:
+                flash('Percentage discount cannot exceed 100%', 'error')
+                return render_template('admin/promotion_form.html', promotion={})
+        except ValueError:
+            flash('Invalid discount value', 'error')
+            return render_template('admin/promotion_form.html', promotion={})
+
+        conn = get_db_connection()
+        if not conn:
+            flash('Database connection failed', 'error')
+            return render_template('admin/promotion_form.html', promotion={})
+
+        cursor = None
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO promotions
+                (code, description, discount_type, discount_value, active_from, active_to, max_uses, is_active)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (code, description, discount_type, discount_value, active_from, active_to,
+                  int(max_uses) if max_uses else None, is_active))
+            promo_id = cursor.lastrowid
+
+            # Notify all users about new promotion
+            if discount_type == 'percentage':
+                discount_label = f"{discount_value:.0f}% OFF"
+            else:
+                discount_label = f"${discount_value:.0f} OFF"
+            cursor.execute("SELECT id FROM users WHERE 1=1")
+            users = cursor.fetchall()
+            for user in users:
+                cursor.execute("""
+                    INSERT INTO notifications (user_id, title, message, promotion_id, created_at)
+                    VALUES (%s, %s, %s, %s, NOW())
+                """, (user[0], '🎉 New Promotion!',
+                      f'Use code {code} to get {discount_label}!', promo_id))
+
+            conn.commit()
+            flash(f'Promotion "{code}" created successfully!', 'success')
+            return redirect(url_for('admin_promotions'))
+        except IntegrityError:
+            flash(f'Promotion code "{code}" already exists', 'error')
+            return render_template('admin/promotion_form.html', promotion={})
+        except Error as e:
+            print(f"Error creating promotion: {e}")
+            flash('Error creating promotion', 'error')
+            return render_template('admin/promotion_form.html', promotion={})
+        finally:
+            try:
+                if cursor:
+                    cursor.close()
+            except Exception:
+                pass
+            close_db_connection(conn)
+
+    return render_template('admin/promotion_form.html', promotion={})
+
+
+@app.route('/admin/promotions/edit/<int:promotion_id>', methods=['GET', 'POST'])
+def admin_edit_promotion(promotion_id):
+    if 'admin_id' not in session:
+        return redirect(url_for('admin_login'))
+
+    conn = get_db_connection()
+    if not conn:
+        flash('Database connection failed', 'error')
+        return redirect(url_for('admin_promotions'))
+
+    try:
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT * FROM promotions WHERE id = %s", (promotion_id,))
+        promotion = cursor.fetchone()
+
+        if not promotion:
+            flash('Promotion not found', 'error')
+            return redirect(url_for('admin_promotions'))
+
+        if request.method == 'POST':
+            code = request.form.get('code', '').strip().upper()
+            description = request.form.get('description', '').strip()
+            discount_type = request.form.get('discount_type', 'percentage')
+            discount_value = request.form.get('discount_value', 0)
+            active_from = request.form.get('active_from', '') or None
+            active_to = request.form.get('active_to', '') or None
+            max_uses = request.form.get('max_uses', '') or None
+            is_active = request.form.get('is_active') == 'on'
+
+            if not code:
+                flash('Promotion code is required', 'error')
+                return render_template('admin/promotion_form.html', promotion=promotion)
+
+            try:
+                discount_value = float(discount_value)
+                if discount_value <= 0:
+                    flash('Discount value must be positive', 'error')
+                    return render_template('admin/promotion_form.html', promotion=promotion)
+                if discount_type == 'percentage' and discount_value > 100:
+                    flash('Percentage discount cannot exceed 100%', 'error')
+                    return render_template('admin/promotion_form.html', promotion=promotion)
+            except ValueError:
+                flash('Invalid discount value', 'error')
+                return render_template('admin/promotion_form.html', promotion=promotion)
+
+            cursor.execute("SELECT id FROM promotions WHERE code = %s AND id != %s", (code, promotion_id))
+            if cursor.fetchone():
+                flash(f'Promotion code "{code}" already exists', 'error')
+                return render_template('admin/promotion_form.html', promotion=promotion)
+
+            cursor.execute("""
+                UPDATE promotions SET
+                    code = %s, description = %s, discount_type = %s, discount_value = %s,
+                    active_from = %s, active_to = %s, max_uses = %s, is_active = %s
+                WHERE id = %s
+            """, (code, description, discount_type, discount_value, active_from, active_to,
+                  int(max_uses) if max_uses else None, is_active, promotion_id))
+            conn.commit()
+            flash(f'Promotion "{code}" updated successfully!', 'success')
+            return redirect(url_for('admin_promotions'))
+
+        return render_template('admin/promotion_form.html', promotion=promotion)
+    except Error as e:
+        print(f"Error editing promotion: {e}")
+        flash('Error editing promotion', 'error')
+        return redirect(url_for('admin_promotions'))
+    finally:
+        try:
+            if cursor:
+                cursor.close()
+        except Exception:
+            pass
+        close_db_connection(conn)
+
+
+@app.route('/admin/promotions/delete/<int:promotion_id>', methods=['POST'])
+def admin_delete_promotion(promotion_id):
+    if 'admin_id' not in session:
+        return jsonify({'success': False, 'message': 'Admin login required'}), 401
+
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'success': False, 'message': 'Database connection failed'}), 500
+
+    try:
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT code FROM promotions WHERE id = %s", (promotion_id,))
+        promotion = cursor.fetchone()
+        if not promotion:
+            cursor.close()
+            close_db_connection(conn)
+            return jsonify({'success': False, 'message': 'Promotion not found'}), 404
+
+        cursor.execute("DELETE FROM promotions WHERE id = %s", (promotion_id,))
+        conn.commit()
+        cursor.close()
+        close_db_connection(conn)
+        return jsonify({'success': True, 'message': f'Promotion "{promotion["code"]}" deleted'}), 200
+    except Error as e:
+        print(f"Error deleting promotion: {e}")
+        return jsonify({'success': False, 'message': 'Error deleting promotion'}), 500
+
+
+@app.route('/admin/promotions/toggle/<int:promotion_id>', methods=['POST'])
+def admin_toggle_promotion(promotion_id):
+    if 'admin_id' not in session:
+        return jsonify({'success': False, 'message': 'Admin login required'}), 401
+
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'success': False, 'message': 'Database connection failed'}), 500
+
+    try:
+        payload = request.get_json(silent=True) or {}
+        new_status = payload.get('is_active')
+        if new_status is None:
+            return jsonify({'success': False, 'message': 'Missing is_active value'}), 400
+
+        cursor = conn.cursor()
+        cursor.execute("UPDATE promotions SET is_active = %s WHERE id = %s", (bool(new_status), promotion_id))
+        conn.commit()
+        cursor.close()
+        close_db_connection(conn)
+        return jsonify({'success': True, 'message': 'Promotion status updated'}), 200
+    except Error as e:
+        print(f"Error toggling promotion: {e}")
+        return jsonify({'success': False, 'message': 'Error updating promotion status'}), 500
+
+
 # API Endpoint to check current session status
 @app.route('/api/check-session')
 def check_session():
@@ -1322,7 +1763,23 @@ def check_session():
             'admin_id': session.get('admin_id')
         })
     elif 'user_email' in session:
-        # Regular user is logged in
+        # Count unread notifications
+        unread_count = 0
+        uid = session.get('user_id')
+        if uid:
+            conn_unread = get_db_connection()
+            if conn_unread:
+                try:
+                    c = conn_unread.cursor()
+                    c.execute("SELECT COUNT(*) FROM notifications WHERE user_id = %s AND is_read = 0", (uid,))
+                    unread_count = c.fetchone()[0]
+                except:
+                    pass
+                finally:
+                    try: c.close()
+                    except: pass
+                    close_db_connection(conn_unread)
+
         return jsonify({
             'logged_in': True,
             'admin': False,
@@ -1330,7 +1787,8 @@ def check_session():
             'name': session.get('user_name', 'User'),
             'email': session.get('user_email', ''),
             'user_id': session.get('user_id'),
-            'is_new_account': user_is_new_account(session.get('user_id'))
+            'is_new_account': user_is_new_account(session.get('user_id')),
+            'unread_notifications': unread_count
         })
     else:
         # No user is logged in
@@ -1339,6 +1797,140 @@ def check_session():
             'admin': False,
             'role': None
         })
+
+
+@app.route('/api/validate-promo', methods=['POST'])
+def api_validate_promo():
+    """Validate a promo code via AJAX. Checks: is_active, date range, max_uses."""
+    data = request.get_json(silent=True) or {}
+    code = data.get('code', '').strip().upper()
+    pickup_str = data.get('pickup_date', '')
+    return_str = data.get('return_date', '')
+
+    if not code:
+        return jsonify({'valid': False, 'message': 'Please enter a promo code'}), 400
+
+    if not pickup_str or not return_str:
+        return jsonify({'valid': False, 'message': 'Missing booking dates'}), 400
+
+    try:
+        pickup = datetime.strptime(pickup_str, '%Y-%m-%d')
+        return_dt = datetime.strptime(return_str, '%Y-%m-%d')
+        days = (return_dt - pickup).days
+    except ValueError:
+        return jsonify({'valid': False, 'message': 'Invalid date format'}), 400
+
+    if days <= 0:
+        return jsonify({'valid': False, 'message': 'Return date must be after pickup date'}), 400
+
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'valid': False, 'message': 'Database connection failed'}), 500
+
+    try:
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT * FROM promotions WHERE code = %s", (code,))
+        promo = cursor.fetchone()
+
+        if not promo:
+            return jsonify({'valid': False, 'message': 'Promo code not found'}), 404
+
+        if not promo['is_active']:
+            return jsonify({'valid': False, 'message': 'This promo code is inactive'}), 400
+
+        today = datetime.now().date()
+
+        if promo['active_from'] and promo['active_from'] > today:
+            return jsonify({'valid': False, 'message': f'This promo starts on {promo["active_from"]}'}), 400
+
+        if promo['active_to'] and promo['active_to'] < today:
+            return jsonify({'valid': False, 'message': 'This promo code has expired'}), 400
+
+        if promo['max_uses'] and promo['uses_count'] >= promo['max_uses']:
+            return jsonify({'valid': False, 'message': 'This promo code has reached its usage limit'}), 400
+
+        discount_label = f"{int(promo['discount_value'])}%" if promo['discount_type'] == 'percentage' else f"${promo['discount_value']:.2f}"
+        return jsonify({
+            'valid': True,
+            'message': f'Promo "{promo["code"]}" applied! {discount_label} off',
+            'discount_type': promo['discount_type'],
+            'discount_value': float(promo['discount_value']),
+            'promotion_id': promo['id']
+        }), 200
+    except Error as e:
+        print(f"Error validating promo: {e}")
+        return jsonify({'valid': False, 'message': 'Error validating promo code'}), 500
+    finally:
+        try:
+            if cursor:
+                cursor.close()
+        except Exception:
+            pass
+        close_db_connection(conn)
+
+
+@app.route('/api/notifications')
+def api_notifications():
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({'notifications': [], 'count': 0})
+
+    only_promos = request.args.get('only_promos') == '1'
+
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'notifications': [], 'count': 0})
+    cursor = None
+    try:
+        cursor = conn.cursor(dictionary=True)
+        where_extra = "AND n.promotion_id IS NOT NULL" if only_promos else ""
+        cursor.execute(f"""
+            SELECT n.id, n.title, n.message, n.promotion_id, n.is_read, n.created_at,
+                   p.code as promo_code, p.discount_type, p.discount_value
+            FROM notifications n
+            LEFT JOIN promotions p ON n.promotion_id = p.id
+            WHERE n.user_id = %s {where_extra}
+            ORDER BY n.created_at DESC
+            LIMIT 20
+        """, (user_id,))
+        notifs = cursor.fetchall()
+        for n in notifs:
+            if isinstance(n.get('created_at'), datetime):
+                n['created_at'] = n['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+        return jsonify({'notifications': notifs, 'count': len(notifs)})
+    except Error as e:
+        print(f"Error fetching notifications: {e}")
+        return jsonify({'notifications': [], 'count': 0})
+    finally:
+        if cursor:
+            try: cursor.close()
+            except: pass
+        close_db_connection(conn)
+
+
+@app.route('/api/notifications/mark-read', methods=['POST'])
+def api_mark_notifications_read():
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({'success': False}), 401
+
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'success': False}), 500
+    cursor = None
+    try:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE notifications SET is_read = 1 WHERE user_id = %s AND is_read = 0", (user_id,))
+        conn.commit()
+        return jsonify({'success': True})
+    except Error as e:
+        print(f"Error marking notifications read: {e}")
+        return jsonify({'success': False}), 500
+    finally:
+        if cursor:
+            try: cursor.close()
+            except: pass
+        close_db_connection(conn)
 
 
 if __name__ == '__main__':

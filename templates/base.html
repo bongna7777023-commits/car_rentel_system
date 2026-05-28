@@ -76,13 +76,31 @@
                     <div id="authButtons">
                         <a href="/login" class="btn-primary text-white px-4 py-2 rounded-lg">Login</a>
                     </div>
-                    <div id="userInfo" class="hidden">
-                        <span class="text-gray-700 mr-3">Hello, <span id="userName" class="font-semibold"></span></span>
+                    <div id="userInfo" class="hidden flex items-center space-x-4">
+                        <div class="relative">
+                            <button id="notifBell" class="text-gray-700 hover:text-purple-600 transition relative">
+                                <i class="fas fa-bell text-lg"></i>
+                                <span id="notifBadge" class="hidden absolute -top-2 -right-3 bg-red-500 text-white text-xs font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1 animate-pulse"></span>
+                            </button>
+                            <div id="notifDropdown" class="hidden absolute right-0 mt-3 w-80 bg-white rounded-xl shadow-2xl border border-gray-100 overflow-hidden z-50 origin-top-right transition-all duration-200">
+                                <div class="p-3 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                                    <span class="font-bold text-sm text-gray-700"><i class="fas fa-bell mr-1.5 text-purple-600"></i>Notifications</span>
+                                    <span id="notifDropdownCount" class="text-xs text-gray-500"></span>
+                                </div>
+                                <div id="notifList" class="max-h-80 overflow-y-auto">
+                                    <div class="p-4 text-center text-gray-400 text-sm"><i class="fas fa-inbox mr-1"></i>No notifications</div>
+                                </div>
+                            </div>
+                        </div>
+                        <span class="text-gray-700">Hello, <span id="userName" class="font-semibold"></span></span>
                         <a href="/logout" class="text-red-600 hover:text-red-700 transition">Logout</a>
                     </div>
                     <div id="adminInfo" class="hidden flex items-center space-x-4">
                         <a href="/admin/dashboard" class="text-gray-700 hover:text-orange-600 transition">
                             <i class="fas fa-tachometer-alt mr-1"></i>Dashboard
+                        </a>
+                        <a href="/admin/promotions" class="text-gray-700 hover:text-orange-600 transition">
+                            <i class="fas fa-tags mr-1"></i>Promotions
                         </a>
                         <a href="/admin/add-car" class="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white px-4 py-2 rounded-lg transition shadow-md">
                             <i class="fas fa-plus-circle mr-1"></i>Add Car
@@ -116,13 +134,19 @@
                         <a href="/login" class="block btn-primary text-white px-4 py-2 rounded-lg text-center mt-2">Login</a>
                     </div>
                     <div id="mobileUserInfo" class="hidden">
-                        <span class="text-gray-700 block mb-2">Hello, <span id="mobileUserName" class="font-semibold"></span></span>
+                        <div class="flex items-center justify-between mb-3">
+                            <span class="text-gray-700 block">Hello, <span id="mobileUserName" class="font-semibold"></span></span>
+                            <span id="mobileNotifBadge" class="hidden bg-red-500 text-white text-xs font-bold rounded-full px-2 py-0.5"><i class="fas fa-bell mr-1"></i><span id="mobileNotifCount">0</span></span>
+                        </div>
                         <a href="/logout" class="block text-red-600 hover:text-red-700 transition py-2">Logout</a>
                     </div>
                     <div id="mobileAdminInfo" class="hidden">
                         <span id="mobileAdminName" class="text-orange-600 font-semibold block mb-3"></span>
                         <a href="/admin/dashboard" class="block text-gray-700 hover:text-orange-600 transition py-2">
                             <i class="fas fa-tachometer-alt mr-2"></i>Dashboard
+                        </a>
+                        <a href="/admin/promotions" class="block text-gray-700 hover:text-orange-600 transition py-2">
+                            <i class="fas fa-tags mr-2"></i>Promotions
                         </a>
                         <a href="/admin/add-car" class="block bg-gradient-to-r from-green-500 to-emerald-600 text-white px-4 py-2 rounded-lg text-center mt-2">
                             <i class="fas fa-plus-circle mr-2"></i>Add Car
@@ -203,7 +227,6 @@
             .then(res => res.json())
             .then(data => {
                 if (data.admin) {
-                    // Admin is logged in
                     document.getElementById('authButtons').classList.add('hidden');
                     document.getElementById('adminInfo').classList.remove('hidden');
                     document.getElementById('adminName').textContent = data.admin_name;
@@ -212,7 +235,6 @@
                     document.getElementById('mobileAdminInfo').classList.remove('hidden');
                     document.getElementById('mobileAdminName').textContent = data.admin_name;
                 } else if (data.logged_in) {
-                    // Regular user is logged in
                     document.getElementById('authButtons').classList.add('hidden');
                     document.getElementById('userInfo').classList.remove('hidden');
                     document.getElementById('userName').textContent = data.name;
@@ -222,8 +244,96 @@
                     document.getElementById('mobileUserInfo').classList.remove('hidden');
                     document.getElementById('mobileUserName').textContent = data.name;
                     document.getElementById('bookingsLinkMobile').classList.remove('hidden');
+
+                    // Notification badge
+                    if (data.unread_notifications > 0) {
+                        const badge = document.getElementById('notifBadge');
+                        badge.textContent = data.unread_notifications;
+                        badge.classList.remove('hidden');
+                        const mobileBadge = document.getElementById('mobileNotifBadge');
+                        document.getElementById('mobileNotifCount').textContent = data.unread_notifications;
+                        mobileBadge.classList.remove('hidden');
+                    }
                 }
             });
+
+        // Notification dropdown
+        const notifBell = document.getElementById('notifBell');
+        const notifDropdown = document.getElementById('notifDropdown');
+        const notifList = document.getElementById('notifList');
+
+        if (notifBell) {
+            notifBell.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const isOpen = !notifDropdown.classList.contains('hidden');
+                notifDropdown.classList.toggle('hidden');
+                if (!isOpen) {
+                    loadNotifications();
+                    fetch('/api/notifications/mark-read', { method: 'POST' }).catch(() => {});
+                    const badge = document.getElementById('notifBadge');
+                    badge.classList.add('hidden');
+                    document.getElementById('mobileNotifBadge').classList.add('hidden');
+                }
+            });
+        }
+
+        document.addEventListener('click', (e) => {
+            if (notifDropdown && !notifDropdown.classList.contains('hidden')) {
+                const bellBtn = document.getElementById('notifBell');
+                if (bellBtn && !bellBtn.contains(e.target) && !notifDropdown.contains(e.target)) {
+                    notifDropdown.classList.add('hidden');
+                }
+            }
+        });
+
+        function loadNotifications() {
+            fetch('/api/notifications')
+                .then(res => res.json())
+                .then(data => {
+                    const list = document.getElementById('notifList');
+                    const countEl = document.getElementById('notifDropdownCount');
+                    if (data.count === 0) {
+                        list.innerHTML = '<div class="p-6 text-center text-gray-400 text-sm"><i class="fas fa-inbox text-2xl mb-2 block"></i>No notifications</div>';
+                        countEl.textContent = '';
+                    } else {
+                        countEl.textContent = data.count + ' unread';
+                        list.innerHTML = data.notifications.map(n => {
+                            const timeAgo = getTimeAgo(n.created_at);
+                            return `<div class="p-3 border-b border-gray-50 hover:bg-purple-50 transition cursor-pointer ${n.is_read === 0 ? 'bg-purple-50/50' : ''}">
+                                <div class="flex items-start gap-2">
+                                    <span class="text-lg flex-shrink-0">🎉</span>
+                                    <div class="min-w-0">
+                                        <p class="text-sm font-semibold text-gray-800">${escapeHtml(n.title)}</p>
+                                        <p class="text-xs text-gray-600 mt-0.5">${escapeHtml(n.message)}</p>
+                                        <p class="text-xs text-gray-400 mt-1"><i class="far fa-clock mr-1"></i>${timeAgo}</p>
+                                    </div>
+                                </div>
+                            </div>`;
+                        }).join('');
+                    }
+                })
+                .catch(() => {});
+        }
+
+        function getTimeAgo(dateStr) {
+            if (!dateStr) return '';
+            const now = new Date();
+            const d = new Date(dateStr.replace(' ', 'T'));
+            const diff = Math.floor((now - d) / 1000);
+            if (diff < 60) return 'just now';
+            if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+            if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+            const days = Math.floor(diff / 86400);
+            if (days < 7) return days + 'd ago';
+            return d.toLocaleDateString();
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
     </script>
     {% block extra_js %}{% endblock %}
 </body>

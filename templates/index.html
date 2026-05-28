@@ -2,6 +2,7 @@
 
 {% block content %}
 <!-- Promotional Banner -->
+{% if active_promotions %}
 <div class="bg-gradient-to-r from-purple-600 via-pink-500 to-purple-600 text-white py-4 animate-gradient">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div class="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-6 text-center sm:text-left">
@@ -10,16 +11,23 @@
                 <span class="font-bold text-lg">Hot Deals!</span>
             </div>
             <div class="flex flex-col sm:flex-row gap-3 sm:gap-4">
-                <span class="bg-white text-purple-600 px-4 py-2 rounded-full text-sm font-bold shadow-lg transform hover:scale-105 transition">
-                    <i class="fas fa-calendar-week mr-1"></i>🎉 30% OFF Saturday & Sunday
+                {% for promo in active_promotions %}
+                <span class="{% if loop.first %}bg-white text-purple-600{% else %}bg-yellow-400 text-purple-800{% endif %} px-4 py-2 rounded-full text-sm font-bold shadow-lg transform hover:scale-105 transition">
+                    {% if promo.discount_type == 'percentage' %}
+                    <i class="fas fa-tag mr-1"></i>{{ promo.discount_value }}% OFF
+                    {% else %}
+                    <i class="fas fa-tag mr-1"></i>{{ promo.discount_value|to_khr }}៛ OFF
+                    {% endif %}
+                    {% if promo.code %}
+                    — Use code <span class="underline font-extrabold">{{ promo.code }}</span>
+                    {% endif %}
                 </span>
-                <span class="bg-yellow-400 text-purple-800 px-4 py-2 rounded-full text-sm font-bold shadow-lg transform hover:scale-105 transition">
-                    <i class="fas fa-gift mr-1"></i>20% OFF First Booking
-                </span>
+                {% endfor %}
             </div>
         </div>
     </div>
 </div>
+{% endif %}
 
 <style>
 @keyframes gradient {
@@ -94,6 +102,13 @@
                     <div class="absolute top-3 right-3 bg-purple-600 text-white px-3 py-1 rounded-full text-sm font-semibold">
                         {{ car.category }}
                     </div>
+                    {% if active_promotions %}
+                    <div class="absolute top-3 left-3">
+                        <span class="bg-gradient-to-r from-yellow-400 to-orange-500 text-white px-2.5 py-1 rounded-full text-xs font-bold shadow-lg animate-pulse">
+                            <i class="fas fa-tag mr-1"></i>PROMO
+                        </span>
+                    </div>
+                    {% endif %}
                 </div>
                 <div class="p-5">
                     <h3 class="text-xl font-bold text-gray-800 mb-2">{{ car.name }}</h3>
@@ -108,10 +123,10 @@
                         <span class="bg-gray-100 text-gray-600 px-2 py-1 rounded text-xs">{{ feature }}</span>
                         {% endfor %}
                     </div>
-                    <div class="flex justify-between items-center">
+                    <div class="flex justify-between items-end">
                         <div>
-                            <span class="text-3xl font-bold text-purple-600">${{ car.price }}</span>
-                            <span class="text-gray-500 text-sm">/day</span>
+                            <div class="text-3xl font-bold text-purple-600">${{ "%.0f"|format(car.price) }} <span class="text-sm font-normal text-gray-500">/day</span></div>
+                            <div class="text-sm text-gray-400 mt-0.5">≈ {{ car.price|to_khr }}៛</div>
                         </div>
                         <a href="/car/{{ car.id }}" class="bg-gradient-to-r from-purple-600 to-purple-700 text-white px-5 py-2.5 rounded-lg hover:from-purple-700 hover:to-purple-800 transition shadow-md hover:shadow-lg transform hover:-translate-y-0.5 text-sm font-semibold">
                             View Details
@@ -141,4 +156,63 @@
         </a>
     </div>
 </section>
+
+<!-- Promo Popup Modal -->
+<div id="promoPopup" class="hidden fixed inset-0 bg-black bg-opacity-60 z-[60] flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 transform transition-all duration-300 scale-95">
+        <div class="text-center mb-4">
+            <div class="bg-gradient-to-br from-purple-100 to-pink-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3">
+                <i class="fas fa-gift text-purple-600 text-3xl"></i>
+            </div>
+            <h3 class="text-2xl font-bold text-gray-800">🎉 New Promotion!</h3>
+        </div>
+        <div id="promoPopupContent" class="space-y-3 mb-6">
+            <!-- Populated by JS -->
+        </div>
+        <div class="flex gap-3">
+            <a href="/cars" id="promoUseCodeBtn" class="flex-1 bg-gradient-to-r from-purple-600 to-pink-500 text-white py-3 rounded-xl font-bold hover:from-purple-700 hover:to-pink-600 transition text-center">
+                Browse Cars <i class="fas fa-arrow-right ml-1"></i>
+            </a>
+            <button id="promoDismissBtn" class="px-6 py-3 rounded-xl font-semibold text-gray-600 hover:bg-gray-100 transition">
+                Dismiss
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    if (sessionStorage.getItem('promo_popup_shown')) return;
+    fetch('/api/check-session')
+        .then(r => r.json())
+        .then(session => {
+            if (!session.logged_in) return;
+            fetch('/api/notifications?only_promos=1')
+                .then(r => r.json())
+                .then(data => {
+                    const promos = (data.notifications || []).filter(n => n.promotion_id);
+                    if (promos.length === 0) return;
+                    const content = document.getElementById('promoPopupContent');
+                    content.innerHTML = promos.map(n => {
+                        const code = n.promo_code || '';
+                        return `<div class="bg-gradient-to-r from-purple-50 to-pink-50 rounded-xl p-4 border border-purple-100">
+                            <p class="text-sm font-semibold text-gray-700">${escapeHtml(n.title)}</p>
+                            <p class="text-sm text-gray-600 mt-1">${escapeHtml(n.message)}</p>
+                            ${code ? `<span class="inline-block mt-2 bg-purple-600 text-white px-3 py-1 rounded-full text-xs font-bold font-mono">${escapeHtml(code)}</span>` : ''}
+                        </div>`;
+                    }).join('');
+                    document.getElementById('promoPopup').classList.remove('hidden');
+                    setTimeout(() => {
+                        document.querySelector('#promoPopup > div').classList.remove('scale-95');
+                    }, 10);
+                    sessionStorage.setItem('promo_popup_shown', '1');
+                })
+                .catch(() => {});
+        })
+        .catch(() => {});
+})();
+document.getElementById('promoDismissBtn')?.addEventListener('click', () => {
+    document.getElementById('promoPopup').classList.add('hidden');
+});
+</script>
 {% endblock %}

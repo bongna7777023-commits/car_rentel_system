@@ -128,6 +128,7 @@ def init_database():
                 discount_amount DECIMAL(10, 2) DEFAULT 0,
                 total_cost DECIMAL(10, 2) NOT NULL,
                 discounts_applied TEXT,
+                promotion_id INT DEFAULT NULL,
                 status VARCHAR(20) DEFAULT 'confirmed',
                 booking_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 INDEX idx_user_email (user_email),
@@ -135,6 +136,32 @@ def init_database():
                 INDEX idx_status (status)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         """)
+        
+        # Ensure promotion_id column exists (for existing databases)
+        try:
+            cursor.execute("ALTER TABLE bookings ADD COLUMN promotion_id INT DEFAULT NULL")
+        except:
+            pass  # Column already exists
+
+        # Ensure additional columns exist (for existing databases with older schema)
+        extra_cols = {
+            'base_cost': 'DECIMAL(10,2) DEFAULT 0',
+            'days': 'INT DEFAULT 0',
+            'discounts_applied': 'TEXT',
+            'user_email': 'VARCHAR(120)',
+            'user_name': 'VARCHAR(100)',
+            'phone': 'VARCHAR(20)',
+            'car_name': 'VARCHAR(100)',
+            'car_image': 'TEXT',
+            'pickup_date': 'DATE',
+            'return_date': 'DATE',
+            'booking_date': 'DATETIME',
+        }
+        for col_name, col_type in extra_cols.items():
+            try:
+                cursor.execute(f"ALTER TABLE bookings ADD COLUMN {col_name} {col_type}")
+            except:
+                pass  # Column already exists
         
         # Create cars table with comprehensive fields
         cursor.execute("""
@@ -196,6 +223,43 @@ def init_database():
             print("="*60)
             print("⚠️  SAVE THESE CREDENTIALS - You'll need them to login!")
             print("="*60 + "\n")
+        
+        # Create promotions table for discount/promo code management
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS promotions (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                code VARCHAR(50) UNIQUE NOT NULL,
+                description TEXT,
+                discount_type ENUM('percentage', 'fixed') NOT NULL DEFAULT 'percentage',
+                discount_value DECIMAL(10, 2) NOT NULL,
+                active_from DATE,
+                active_to DATE,
+                max_uses INT DEFAULT NULL,
+                uses_count INT DEFAULT 0,
+                is_active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_code (code),
+                INDEX idx_is_active (is_active),
+                INDEX idx_active_dates (active_from, active_to)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        """)
+        
+        # Create notifications table for promotion alerts
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS notifications (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT NULL,
+                title VARCHAR(255) NOT NULL,
+                message TEXT,
+                promotion_id INT NULL,
+                is_read TINYINT DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_user_id (user_id),
+                INDEX idx_is_read (is_read),
+                INDEX idx_created_at (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        """)
         
         cursor.close()
         close_db_connection(conn)

@@ -246,33 +246,47 @@
                             <div class="flex flex-col lg:flex-row justify-between items-start lg:items-end gap-6">
                                 <div class="flex-1">
                                     {% if booking.discount_amount and booking.discount_amount > 0 %}
-                                    <div class="mb-3">
-                                        <p class="text-sm text-gray-600 mb-2">
-                                            Base Cost: <span class="line-through text-gray-400">${{ "%.2f"|format(booking.base_cost) }}</span>
-                                        </p>
-                                        <div class="flex flex-wrap gap-2 mb-2">
+                                    <div class="mb-3 bg-gray-50 rounded-lg p-3 border border-gray-200">
+                                        <table class="w-full text-xs">
+                                            <tr>
+                                                <td class="py-1 text-gray-600">Base Cost</td>
+                                                <td class="py-1 text-right">
+                                                    <span class="line-through text-gray-400">${{ "%.2f"|format(booking.base_cost) }}</span>
+                                                    <br>
+                                                    <span class="line-through text-gray-400">{{ booking.base_cost|to_khr }}៛</span>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td class="py-1 text-green-600">Discount</td>
+                                                <td class="py-1 text-right text-green-600">
+                                                    -${{ "%.2f"|format(booking.discount_amount) }}<br>
+                                                    <span class="text-xs">-{{ booking.discount_amount|to_khr }}៛</span>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                        <div class="flex flex-wrap gap-2 mt-2">
+                                            {% if booking.promo_code %}
+                                            <span class="bg-green-100 text-green-700 px-2 py-0.5 rounded-full text-xs font-semibold">
+                                                <i class="fas fa-tag mr-1"></i>Promo {{ booking.promo_code }}
+                                            </span>
+                                            {% endif %}
                                             {% if booking.discounts_applied %}
                                                 {% if booking.discounts_applied is string %}
                                                     {% for discount in booking.discounts_applied.split(',') %}
-                                                    <span class="bg-gradient-to-r from-green-400 to-emerald-500 text-white px-3 py-1 rounded-full text-xs font-bold shadow-sm">
+                                                    <span class="bg-green-100 text-green-700 px-2 py-0.5 rounded-full text-xs font-semibold">
                                                         <i class="fas fa-tag mr-1"></i>{{ discount.strip() }}
                                                     </span>
                                                     {% endfor %}
                                                 {% endif %}
                                             {% endif %}
                                         </div>
-                                        <p class="text-green-600 font-semibold text-sm">
-                                            <i class="fas fa-piggy-bank mr-1"></i>
-                                            Saved: ${{ "%.2f"|format(booking.discount_amount) }}
-                                        </p>
                                     </div>
                                     {% endif %}
                                     
-                                    <div class="bg-gradient-to-r from-orange-50 to-red-50 rounded-xl p-4 inline-block">
-                                        <p class="text-xs text-gray-600 font-semibold mb-1 uppercase">Total Amount</p>
-                                        <p class="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-orange-600 to-red-600">
-                                            ${{ "%.2f"|format(booking.total_cost) }}
-                                        </p>
+                                    <div class="bg-gradient-to-br from-orange-500 to-red-600 rounded-xl p-4 text-white shadow-lg inline-block">
+                                        <p class="text-orange-100 text-xs font-semibold uppercase tracking-wide mb-1">Total Amount</p>
+                                        <p class="text-2xl font-black">${{ "%.2f"|format(booking.total_cost) }}</p>
+                                        <p class="text-orange-200 text-xs mt-1">≈ {{ booking.total_cost|to_khr }}៛</p>
                                     </div>
                                 </div>
 

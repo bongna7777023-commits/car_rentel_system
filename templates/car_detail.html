@@ -19,14 +19,15 @@
                 <div class="p-8 lg:p-12">
                     <h1 class="text-4xl font-bold text-gray-800 mb-4">{{ car.name }}</h1>
                     
-                    <div class="mb-6">
-                        <div class="flex items-baseline">
-                            <span class="text-5xl font-bold text-purple-600">{{ (car.price_per_day if car.price_per_day else (car.price * 4100))|int }}៛</span>
-                            <span class="text-gray-500 text-xl ml-2">/day</span>
+                    {% set usd_price = car.price_per_day if car.price_per_day else car.price %}
+                    <div class="mb-6 bg-gradient-to-r from-purple-50 to-blue-50 rounded-xl p-5 border border-purple-100">
+                        <div class="text-5xl font-bold text-purple-700">${{ "%.0f"|format(usd_price) }} <span class="text-xl font-normal text-gray-500">/day</span></div>
+                        <div class="inline-flex items-center gap-1.5 mt-2 bg-white/70 px-3 py-1.5 rounded-full text-sm font-semibold text-gray-600">
+                            <span>🇰🇭</span>
+                            <span>≈ {{ usd_price|to_khr }}៛</span>
+                            <span class="text-gray-400 font-normal">/ថ្ងៃ</span>
                         </div>
-                        <p class="text-gray-600 mt-2">${{ "%.0f"|format(car.price_per_day if car.price_per_day else car.price) }} USD per day</p>
                     </div>
-                    
                     <div class="grid grid-cols-2 gap-4 mb-8">
                         <div class="bg-gray-50 p-4 rounded-lg">
                             <i class="fas fa-users text-purple-600 text-2xl mb-2"></i>
@@ -88,17 +89,24 @@
                         </button>
                     </div>
                     
-                    <!-- Weekend Discount Promotion -->
+                    {% if active_promotions %}
+                    {% for promo in active_promotions %}
                     <div class="mt-6 p-4 bg-gradient-to-r from-purple-600 to-pink-500 rounded-lg shadow-lg">
                         <div class="flex items-start">
                             <i class="fas fa-gift text-yellow-300 text-3xl mr-3 mt-1 animate-bounce"></i>
                             <div>
-                                <p class="text-white font-bold text-lg mb-1">🎉 Weekend Special!</p>
-                                <p class="text-yellow-100 text-sm font-semibold">Get 30% OFF for new accounts on Saturday & Sunday rentals</p>
-                                <p class="text-purple-100 text-xs mt-1">The discount applies on a first booking when the rental includes Saturday or Sunday.</p>
+                                <p class="text-white font-bold text-lg mb-1">🎉 {{ promo.description }}</p>
+                                {% if promo.discount_type == 'percentage' %}
+                                <p class="text-yellow-100 text-sm font-semibold">Get {{ promo.discount_value }}% OFF — Use code <span class="underline font-extrabold">{{ promo.code }}</span></p>
+                                {% else %}
+                                <p class="text-yellow-100 text-sm font-semibold">Get {{ promo.discount_value|to_khr }}៛ OFF — Use code <span class="underline font-extrabold">{{ promo.code }}</span></p>
+                                {% endif %}
+                                {% if not loop.last %}<hr class="my-2 border-purple-400">{% endif %}
                             </div>
                         </div>
                     </div>
+                    {% endfor %}
+                    {% endif %}
                     
                     <div class="mt-4 p-4 bg-blue-50 rounded-lg">
                         <div class="flex items-start">
@@ -141,8 +149,9 @@
 </section>
 
 <!-- Booking Modal -->
-<div id="bookingModal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-    <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8">
+<div id="bookingModal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 overflow-y-auto">
+    <div class="flex items-center justify-center min-h-screen px-4 py-8">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8">
         <div class="flex justify-between items-center mb-6">
             <h2 class="text-2xl font-bold text-gray-800">Book {{ car.name }}</h2>
             <button id="closeModal" class="text-gray-500 hover:text-gray-700 text-2xl">
@@ -163,31 +172,64 @@
                     class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-600 focus:border-transparent outline-none">
             </div>
             
-            <div id="costPreview" class="hidden bg-purple-50 p-4 rounded-lg">
-                <div class="flex justify-between mb-2">
-                    <span class="text-gray-600">Daily Rate:</span>
-                    <span class="font-semibold text-gray-800">{{ (car.price_per_day if car.price_per_day else (car.price * 4100))|int }}៛</span>
+            <div>
+                <label for="promoCode" class="block text-sm font-medium text-gray-700 mb-2">Promo Code</label>
+                <div class="flex gap-2">
+                    <input type="text" id="promoCode" placeholder="Enter promo code"
+                        class="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-600 focus:border-transparent outline-none uppercase">
+                    <button type="button" id="applyPromoBtn" class="bg-purple-600 text-white px-4 py-3 rounded-lg hover:bg-purple-700 transition font-semibold whitespace-nowrap">
+                        Apply
+                    </button>
                 </div>
-                <div class="flex justify-between mb-2">
-                    <span class="text-gray-600">Number of Days:</span>
-                    <span id="daysCount" class="font-semibold text-gray-800">0</span>
-                </div>
-                <div class="flex justify-between mb-2">
-                    <span class="text-gray-600">Base Cost:</span>
-                    <span id="baseCost" class="font-semibold text-gray-800">0៛</span>
-                </div>
-                <div id="discountSection" class="hidden">
-                    <div id="weekendDiscount" class="hidden flex justify-between mb-2 text-green-600">
-                        <span class="text-sm"><i class="fas fa-tag mr-1"></i>New Account Weekend Discount (30%):</span>
-                        <span class="font-semibold">-<span id="weekendDiscountAmount">0</span>៛</span>
-                    </div>
-                </div>
-                <div class="border-t pt-2 mt-2">
-                    <div class="flex justify-between">
-                        <span class="text-lg font-bold text-gray-800">Total:</span>
-                        <span id="totalCost" class="text-lg font-bold text-purple-600" data-price="{{ car.price_per_day if car.price_per_day else car.price }}">0៛</span>
-                    </div>
-                </div>
+                <div id="promoMessage" class="hidden mt-2 text-sm font-medium"></div>
+            </div>
+            
+            {% set usd_price = car.price_per_day if car.price_per_day else car.price %}
+            <div id="costPreview" class="hidden bg-white border border-purple-200 rounded-xl p-5 shadow-sm">
+                <h3 class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">Booking Summary</h3>
+                <table class="w-full text-sm">
+                    <tr class="border-b border-gray-100">
+                        <td class="py-2 text-gray-600">Daily Rate</td>
+                        <td class="py-2 text-right">
+                            <div class="font-semibold text-gray-800">${{ "%.0f"|format(usd_price) }} <span class="font-normal text-gray-400">/day</span></div>
+                            <div class="text-xs text-purple-600">≈ {{ usd_price|to_khr }}៛ <span class="text-gray-400">/ថ្ងៃ</span></div>
+                        </td>
+                    </tr>
+                    <tr class="border-b border-gray-100">
+                        <td class="py-2 text-gray-600">Days</td>
+                        <td class="py-2 text-right font-semibold text-gray-800" id="daysCount">0</td>
+                    </tr>
+                    <tr class="border-b border-gray-100">
+                        <td class="py-2 text-gray-600">Base Cost</td>
+                        <td class="py-2 text-right">
+                            <div id="baseCostUSD" class="font-semibold text-gray-800">$0</div>
+                            <div id="baseCost" class="text-xs text-gray-500">0៛</div>
+                        </td>
+                    </tr>
+                    <tbody id="discountSection" class="hidden">
+                        <tr id="weekendDiscount" class="hidden border-b border-gray-100">
+                            <td class="py-2 text-green-600 text-xs"><i class="fas fa-tag mr-1"></i>Weekend Discount (30%)</td>
+                            <td class="py-2 text-right text-green-600">
+                                <div class="text-xs font-semibold">-<span id="weekendDiscountAmountUSD">$0</span></div>
+                                <div class="text-xs">-<span id="weekendDiscountAmount">0</span>៛</div>
+                            </td>
+                        </tr>
+                        <tr id="promoDiscount" class="hidden border-b border-gray-100">
+                            <td class="py-2 text-green-600 text-xs"><i class="fas fa-tag mr-1"></i>Promo <span id="promoCodeLabel"></span></td>
+                            <td class="py-2 text-right text-green-600">
+                                <div class="text-xs font-semibold">-<span id="promoDiscountAmountUSD">$0</span></div>
+                                <div class="text-xs">-<span id="promoDiscountAmount">0</span>៛</div>
+                            </td>
+                        </tr>
+                    </tbody>
+                    <tr class="bg-purple-50">
+                        <td class="py-3 font-bold text-gray-800">Total</td>
+                        <td class="py-3 text-right">
+                            <div id="totalCostUSD" class="text-base font-bold text-purple-700">$0</div>
+                            <div id="totalCost" class="text-xs font-semibold text-purple-500">0៛</div>
+                        </td>
+                    </tr>
+                </table>
                 <div id="discountInfo" class="hidden mt-3 p-3 bg-green-50 rounded-lg">
                     <p class="text-green-800 text-sm font-semibold"><i class="fas fa-check-circle mr-1"></i>Special discounts applied!</p>
                 </div>
@@ -201,7 +243,25 @@
             </button>
         </form>
     </div>
+    </div>
 </div>
+
+<!-- Notification Toast -->
+<div id="notifToast" class="hidden fixed bottom-6 right-6 z-[70] max-w-sm bg-white rounded-xl shadow-2xl border border-gray-100 p-4 transform transition-all duration-500 translate-y-4 opacity-0">
+    <div class="flex items-start gap-3">
+        <div class="bg-gradient-to-br from-purple-100 to-pink-100 rounded-full p-2 flex-shrink-0">
+            <i class="fas fa-gift text-purple-600 text-lg"></i>
+        </div>
+        <div class="flex-1 min-w-0">
+            <p class="text-sm font-bold text-gray-800">🏷️ You have <span id="toastNotifCount">0</span> new promotion<span id="toastNotifPlural">s</span> available!</p>
+            <p class="text-xs text-gray-500 mt-0.5">Click the bell <i class="fas fa-bell mx-0.5"></i> icon to view</p>
+        </div>
+        <button onclick="dismissToast()" class="text-gray-400 hover:text-gray-600 flex-shrink-0">
+            <i class="fas fa-times"></i>
+        </button>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block extra_js %}
@@ -212,6 +272,9 @@
     const bookingForm = document.getElementById('bookingForm');
     const pickupDate = document.getElementById('pickupDate');
     const returnDate = document.getElementById('returnDate');
+    const promoCode = document.getElementById('promoCode');
+    const applyPromoBtn = document.getElementById('applyPromoBtn');
+    const promoMessage = document.getElementById('promoMessage');
     const costPreview = document.getElementById('costPreview');
     const daysCount = document.getElementById('daysCount');
     const totalCost = document.getElementById('totalCost');
@@ -221,6 +284,7 @@
     const carPrice = {{ car.price_per_day or car.price }};
     const carId = {{ car.id }};
     const USD_TO_KHR = 4100;
+    let validatedPromo = null;
     
     // Set minimum date to today
     const today = new Date().toISOString().split('T')[0];
@@ -228,7 +292,6 @@
     returnDate.min = today;
     
     bookNowBtn.addEventListener('click', async () => {
-        // Check if user is logged in
         const response = await fetch('/api/check-session');
         const data = await response.json();
         
@@ -239,6 +302,9 @@
             return;
         }
         
+        validatedPromo = null;
+        promoCode.value = '';
+        promoMessage.classList.add('hidden');
         bookingModal.classList.remove('hidden');
     });
     
@@ -248,27 +314,100 @@
         successMsg.classList.add('hidden');
     });
     
-    // Close modal when clicking outside
     bookingModal.addEventListener('click', (e) => {
         if (e.target === bookingModal) {
             bookingModal.classList.add('hidden');
         }
     });
     
-    // Calculate cost when dates change
+    async function validatePromo() {
+        const code = promoCode.value.trim().toUpperCase();
+        promoCode.value = code;
+        
+        if (!code) {
+            promoMessage.className = 'hidden mt-2 text-sm font-medium';
+            validatedPromo = null;
+            calculateCost();
+            return;
+        }
+        
+        if (!pickupDate.value || !returnDate.value) {
+            promoMessage.className = 'mt-2 text-sm font-medium text-red-600';
+            promoMessage.textContent = 'Please select pickup and return dates first';
+            promoMessage.classList.remove('hidden');
+            validatedPromo = null;
+            return;
+        }
+        
+        applyPromoBtn.disabled = true;
+        applyPromoBtn.textContent = '...';
+        
+        try {
+            const response = await fetch('/api/validate-promo', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    code: code,
+                    pickup_date: pickupDate.value,
+                    return_date: returnDate.value
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (data.valid) {
+                promoMessage.className = 'mt-2 text-sm font-medium text-green-600';
+                promoMessage.textContent = data.message;
+                promoMessage.classList.remove('hidden');
+                validatedPromo = { code: code, discount_type: data.discount_type, discount_value: data.discount_value };
+                calculateCost();
+            } else {
+                promoMessage.className = 'mt-2 text-sm font-medium text-red-600';
+                promoMessage.textContent = data.message;
+                promoMessage.classList.remove('hidden');
+                validatedPromo = null;
+                calculateCost();
+            }
+        } catch (error) {
+            promoMessage.className = 'mt-2 text-sm font-medium text-red-600';
+            promoMessage.textContent = 'Error validating promo code';
+            promoMessage.classList.remove('hidden');
+            validatedPromo = null;
+        } finally {
+            applyPromoBtn.disabled = false;
+            applyPromoBtn.textContent = 'Apply';
+        }
+    }
+    
+    applyPromoBtn.addEventListener('click', validatePromo);
+    promoCode.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            validatePromo();
+        }
+    });
+    
     function isWeekendRental(pickupDateStr, returnDateStr) {
         const pickup = new Date(pickupDateStr);
         const returnDt = new Date(returnDateStr);
         let current = new Date(pickup);
         
         while (current < returnDt) {
-            const dayOfWeek = current.getDay(); // 0=Sunday, 6=Saturday
+            const dayOfWeek = current.getDay();
             if (dayOfWeek === 0 || dayOfWeek === 6) {
                 return true;
             }
             current.setDate(current.getDate() + 1);
         }
         return false;
+    }
+    
+    function formatUSD(amount) {
+        return '$' + Math.round(amount).toLocaleString();
+    }
+    
+    function formatKHR(amount) {
+        return Math.round(amount).toLocaleString() + '៛';
     }
     
     async function calculateCost() {
@@ -284,9 +423,7 @@
                 let totalUSD = baseUSD;
                 let totalKHR = baseKHR;
                 
-                // Check for discounts
                 const hasWeekendDiscount = isWeekendRental(pickupDate.value, returnDate.value);
-
                 const sessionResponse = await fetch('/api/check-session');
                 const sessionData = await sessionResponse.json();
                 const hasNewAccountDiscount = !!sessionData.is_new_account;
@@ -294,17 +431,40 @@
                 const discountSection = document.getElementById('discountSection');
                 const discountInfo = document.getElementById('discountInfo');
                 const weekendDiscountEl = document.getElementById('weekendDiscount');
+                const promoDiscountEl = document.getElementById('promoDiscount');
                 
                 let hasDiscount = false;
                 
                 if (hasWeekendDiscount && hasNewAccountDiscount) {
-                    const weekendDiscountAmount = Math.round(baseKHR * 0.3);
-                    totalKHR -= weekendDiscountAmount;
-                    document.getElementById('weekendDiscountAmount').textContent = weekendDiscountAmount.toLocaleString();
+                    const weekendDiscountUSD = Math.round(baseUSD * 0.3);
+                    const weekendDiscountKHR = Math.round(weekendDiscountUSD * USD_TO_KHR);
+                    totalUSD -= weekendDiscountUSD;
+                    totalKHR -= weekendDiscountKHR;
+                    document.getElementById('weekendDiscountAmountUSD').textContent = formatUSD(weekendDiscountUSD);
+                    document.getElementById('weekendDiscountAmount').textContent = formatKHR(weekendDiscountKHR);
                     weekendDiscountEl.classList.remove('hidden');
                     hasDiscount = true;
                 } else {
                     weekendDiscountEl.classList.add('hidden');
+                }
+                
+                if (validatedPromo) {
+                    let promoDiscountUSD = 0;
+                    if (validatedPromo.discount_type === 'percentage') {
+                        promoDiscountUSD = Math.round(baseUSD * validatedPromo.discount_value / 100);
+                    } else {
+                        promoDiscountUSD = Math.round(validatedPromo.discount_value);
+                    }
+                    const promoDiscountKHR = Math.round(promoDiscountUSD * USD_TO_KHR);
+                    totalUSD -= promoDiscountUSD;
+                    totalKHR -= promoDiscountKHR;
+                    document.getElementById('promoCodeLabel').textContent = validatedPromo.code;
+                    document.getElementById('promoDiscountAmountUSD').textContent = formatUSD(promoDiscountUSD);
+                    document.getElementById('promoDiscountAmount').textContent = formatKHR(promoDiscountKHR);
+                    promoDiscountEl.classList.remove('hidden');
+                    hasDiscount = true;
+                } else {
+                    promoDiscountEl.classList.add('hidden');
                 }
                 
                 if (hasDiscount) {
@@ -315,12 +475,14 @@
                     discountInfo.classList.add('hidden');
                 }
                 
-                // Ensure total doesn't go below 0
+                totalUSD = Math.max(totalUSD, 0);
                 totalKHR = Math.max(totalKHR, 0);
                 
                 daysCount.textContent = days;
-                document.getElementById('baseCost').textContent = baseKHR.toLocaleString() + '៛';
-                totalCost.textContent = totalKHR.toLocaleString() + '៛';
+                document.getElementById('baseCostUSD').textContent = formatUSD(baseUSD);
+                document.getElementById('baseCost').textContent = formatKHR(baseKHR);
+                document.getElementById('totalCostUSD').textContent = formatUSD(totalUSD);
+                totalCost.textContent = formatKHR(totalKHR);
                 costPreview.classList.remove('hidden');
             } else {
                 costPreview.classList.add('hidden');
@@ -330,10 +492,18 @@
     
     pickupDate.addEventListener('change', () => {
         returnDate.min = pickupDate.value;
+        validatedPromo = null;
+        promoMessage.classList.add('hidden');
+        promoCode.value = '';
         calculateCost();
     });
     
-    returnDate.addEventListener('change', calculateCost);
+    returnDate.addEventListener('change', () => {
+        validatedPromo = null;
+        promoMessage.classList.add('hidden');
+        promoCode.value = '';
+        calculateCost();
+    });
     
     bookingForm.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -342,15 +512,20 @@
         successMsg.classList.add('hidden');
         
         try {
+            const body = {
+                pickup_date: pickupDate.value,
+                return_date: returnDate.value
+            };
+            if (validatedPromo) {
+                body.promo_code = validatedPromo.code;
+            }
+            
             const response = await fetch('/book-car/' + carId, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({
-                    pickup_date: pickupDate.value,
-                    return_date: returnDate.value
-                })
+                body: JSON.stringify(body)
             });
             
             const data = await response.json();
@@ -359,12 +534,14 @@
                 let message = data.message + ' Booking ID: #' + data.booking_id;
                 if (data.discounts_applied && data.discounts_applied.length > 0) {
                     message += ' | Discounts: ' + data.discounts_applied.join(', ');
-                    message += ' | You saved: ' + Math.round(data.discount_amount * USD_TO_KHR).toLocaleString() + '៛';
+                    message += ' | You saved: $' + Math.round(data.discount_amount).toLocaleString();
+                    message += ' (' + Math.round(data.discount_amount * USD_TO_KHR).toLocaleString() + '៛)';
                 }
                 successMsg.textContent = message;
                 successMsg.classList.remove('hidden');
                 bookingForm.reset();
                 costPreview.classList.add('hidden');
+                validatedPromo = null;
                 
                 setTimeout(() => {
                     bookingModal.classList.add('hidden');
@@ -381,5 +558,38 @@
             errorMsg.classList.remove('hidden');
         }
     });
+</script>
+
+<!-- Toast Notification JS -->
+<script>
+(function() {
+    fetch('/api/check-session')
+        .then(r => r.json())
+        .then(data => {
+            if (data.logged_in && data.unread_notifications > 0) {
+                showToast(data.unread_notifications);
+            }
+        })
+        .catch(() => {});
+})();
+let toastTimer = null;
+function showToast(count) {
+    const toast = document.getElementById('notifToast');
+    document.getElementById('toastNotifCount').textContent = count;
+    document.getElementById('toastNotifPlural').textContent = count > 1 ? 's' : '';
+    toast.classList.remove('hidden');
+    setTimeout(() => {
+        toast.classList.remove('translate-y-4', 'opacity-0');
+        toast.classList.add('translate-y-0', 'opacity-100');
+    }, 100);
+    toastTimer = setTimeout(dismissToast, 5000);
+}
+function dismissToast() {
+    const toast = document.getElementById('notifToast');
+    toast.classList.add('translate-y-4', 'opacity-0');
+    toast.classList.remove('translate-y-0', 'opacity-100');
+    setTimeout(() => toast.classList.add('hidden'), 500);
+    if (toastTimer) clearTimeout(toastTimer);
+}
 </script>
 {% endblock %}
