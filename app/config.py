@@ -19,12 +19,22 @@ class Config:
     # Debug mode
     DEBUG = os.getenv('FLASK_ENV', 'development') == 'development'
     
-    # Database
+    # Database - raw connection
     DB_HOST = os.getenv('DB_HOST', 'localhost')
     DB_USER = os.getenv('DB_USER', 'root')
     DB_PASSWORD = os.getenv('DB_PASSWORD', '')
     DB_NAME = os.getenv('DB_NAME', 'car_rental_db')
     DB_PORT = int(os.getenv('DB_PORT', 3306))
+
+    # SQLAlchemy
+    SQLALCHEMY_DATABASE_URI = (
+        f"mysql+mysqlconnector://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+    )
+    SQLALCHEMY_TRACK_MODIFICATIONS = False
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        'pool_size': 5,
+        'pool_recycle': 3600,
+    }
 
 
 class DevelopmentConfig(Config):

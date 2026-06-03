@@ -12,6 +12,9 @@ from dotenv import load_dotenv
 import secrets
 from uuid import uuid4
 
+from app.extensions import db, migrate
+from app import models as app_models  # noqa: F401 — registers models with SQLAlchemy
+
 # Load environment variables
 load_dotenv(os.path.join(os.path.dirname(__file__), '../config/.env'))
 
@@ -31,6 +34,10 @@ app.config['SESSION_COOKIE_SECURE'] = config.SESSION_COOKIE_SECURE
 app.config['SESSION_COOKIE_HTTPONLY'] = config.SESSION_COOKIE_HTTPONLY
 app.config['SESSION_COOKIE_SAMESITE'] = config.SESSION_COOKIE_SAMESITE
 app.config['PERMANENT_SESSION_LIFETIME'] = config.PERMANENT_SESSION_LIFETIME
+
+# Initialize SQLAlchemy and Flask-Migrate
+db.init_app(app)
+migrate.init_app(app, db)
 
 # Google OAuth Configuration
 oauth = OAuth(app)
@@ -92,14 +99,14 @@ def save_car_image(file_storage):
     return f"/static/uploads/cars/{unique_name}"
 
 
-def user_is_new_account(user_id):
+def user_is_new_account(user_email):
     """Treat a user as a new account if they have not made any bookings yet."""
     conn = get_db_connection()
     if not conn:
         return False
     try:
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT COUNT(*) AS total FROM bookings WHERE user_id = %s", (user_id,))
+        cursor.execute("SELECT COUNT(*) AS total FROM bookings WHERE user_email = %s", (user_email,))
         row = cursor.fetchone() or {}
         return int(row.get('total', 0)) == 0
     except Error as e:
@@ -121,7 +128,7 @@ def booking_includes_weekend(start_date, end_date):
     return False
 
 
-def user_has_overlapping_item_booking(user_id, car_id, start_date, end_date):
+def user_has_overlapping_item_booking(user_email, car_id, start_date, end_date):
     """Return True when the user already booked the same car for overlapping dates."""
     conn = get_db_connection()
     if not conn:
@@ -132,14 +139,14 @@ def user_has_overlapping_item_booking(user_id, car_id, start_date, end_date):
             """
             SELECT id
             FROM bookings
-            WHERE user_id = %s
+            WHERE user_email = %s
               AND car_id = %s
               AND LOWER(COALESCE(status, 'confirmed')) <> 'cancelled'
-              AND start_date < %s
-              AND end_date > %s
+              AND pickup_date < %s
+              AND return_date > %s
             LIMIT 1
             """,
-            (user_id, car_id, end_date.strftime('%Y-%m-%d'), start_date.strftime('%Y-%m-%d'))
+            (user_email, car_id, end_date.strftime('%Y-%m-%d'), start_date.strftime('%Y-%m-%d'))
         )
         return cursor.fetchone() is not None
     except Error as e:
@@ -322,8 +329,8 @@ def create_user(fullname, email, phone, password_hash):
         
         # Use the actual database columns
         cursor.execute(
-            "INSERT INTO users (username, email, password_hash, first_name, last_name, phone) VALUES (%s, %s, %s, %s, %s, %s)",
-            (email.split('@')[0], email, password_hash, first_name, last_name, phone)
+            "INSERT INTO users (name, email, password, phone) VALUES (%s, %s, %s, %s)",
+            (fullname.strip(), email, password_hash, phone)
         )
         conn.commit()
         
@@ -644,9 +651,8 @@ def login():
         user = get_user_by_email(email)
 
         # Verify password
-        if user and check_password_hash(user['password_hash'], password):
-            # Build full name from first and last name
-            full_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
+        if user and check_password_hash(user['password'], password):
+            full_name = user.get('name', '')
             clear_admin_session()
             session['user_id'] = user['id']
             session['user_name'] = full_name
@@ -778,7 +784,7 @@ def book_car(car_id):
                 'You have already booked this item for this date. '
                 'Please choose a different date or item.'
             )
-            if user_has_overlapping_item_booking(session['user_id'], car_id, pickup, return_dt):
+            if user_has_overlapping_item_booking(session['user_email'], car_id, pickup, return_dt):
                 if is_json:
                     return jsonify({'success': False, 'message': duplicate_booking_message}), 400
                 return render_template('car_detail.html', car=car, error=duplicate_booking_message)
@@ -789,7 +795,7 @@ def book_car(car_id):
             promotion_id = None
             discounts_applied = []
 
-            is_new_account = user_is_new_account(session['user_id'])
+            is_new_account = user_is_new_account(session['user_email'])
             has_weekend_dates = booking_includes_weekend(pickup, return_dt - timedelta(days=1))
 
             if is_new_account and has_weekend_dates:
@@ -846,42 +852,31 @@ def book_car(car_id):
 
             try:
                 cursor = conn.cursor()
-                # Generate a unique booking reference
-                booking_reference = f"BK-{uuid4().hex[:10].upper()}"
-                
                 car_name = f"{car.get('brand', '')} {car.get('model', '')}".strip()
                 car_image = car.get('image_url') or car.get('image', '')
                 cursor.execute("""
                     INSERT INTO bookings
-                    (booking_reference, user_id, car_id, start_date, end_date,
-                     pickup_location, dropoff_location, days, status, total_cost,
-                     base_cost, discount_amount, promotion_id,
-                     discounts_applied, user_email, user_name, phone,
-                     car_name, car_image, pickup_date, return_date)
+                    (user_email, user_name, phone, car_id, car_name, car_image,
+                     pickup_date, return_date, days, base_cost, discount_amount,
+                     total_cost, discounts_applied, promotion_id, status)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                            %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            %s, %s, %s)
                 """, (
-                    booking_reference,
-                    session.get('user_id'),
-                    car_id,
-                    pickup_date,
-                    return_date,
-                    'Main Branch',
-                    'Main Branch',
-                    days,
-                    'confirmed',
-                    total_cost,
-                    base_cost,
-                    promo_discount_amount,
-                    promotion_id,
-                    ','.join(discounts_applied) if discounts_applied else None,
                     session.get('user_email', ''),
                     session.get('user_name', ''),
                     phone,
+                    car_id,
                     car_name,
                     car_image,
                     pickup_date,
-                    return_date
+                    return_date,
+                    days,
+                    base_cost,
+                    promo_discount_amount,
+                    total_cost,
+                    ','.join(discounts_applied) if discounts_applied else None,
+                    promotion_id,
+                    'confirmed'
                 ))
                 booking_id = cursor.lastrowid
 
