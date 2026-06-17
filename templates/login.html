@@ -100,19 +100,6 @@
 
                     <form id="loginForm" class="space-y-6">
                         <div>
-                            <label for="fullname" class="block text-sm font-medium text-white/70 mb-2">Full Name</label>
-                            <div class="relative group">
-                                <div
-                                    class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-white/40">
-                                    <i class="fas fa-user"></i>
-                                </div>
-                                <input type="text" id="fullname" name="fullname" required
-                                    class="pl-11 w-full px-4 py-3 rounded-2xl bg-white/5 border border-white/10 text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-purple-400 focus:border-transparent transition"
-                                    placeholder="John Smith" autocomplete="name">
-                            </div>
-                        </div>
-
-                        <div>
                             <label for="email" class="block text-sm font-medium text-white/70 mb-2">Email Address</label>
                             <div class="relative group">
                                 <div
@@ -225,7 +212,6 @@
     document.getElementById('loginForm').addEventListener('submit', async (e) => {
         e.preventDefault();
 
-        const fullname = document.getElementById('fullname').value.trim();
         const email = document.getElementById('email').value.trim();
         const phone = document.getElementById('phone').value.trim();
         const passwordInput = document.getElementById('password');
@@ -237,7 +223,7 @@
         errorMessage.classList.add('hidden');
 
         // Validation
-        if (!fullname || !email || !phone || !password) {
+        if (!email || !phone || !password) {
             errorMessage.textContent = '⚠️ Please fill in all fields';
             errorMessage.classList.remove('hidden');
             return;
@@ -254,7 +240,7 @@
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ fullname, email, phone, password })
+                body: JSON.stringify({ email, phone, password })
             });
 
             const data = await response.json();

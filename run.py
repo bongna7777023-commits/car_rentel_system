@@ -327,10 +327,13 @@ def create_user(fullname, email, phone, password_hash):
         first_name = name_parts[0]
         last_name = name_parts[1] if len(name_parts) > 1 else ''
         
+        # Use email as username if not provided
+        username = email.split('@')[0]
+        
         # Use the actual database columns
         cursor.execute(
-            "INSERT INTO users (name, email, password, phone) VALUES (%s, %s, %s, %s)",
-            (fullname.strip(), email, password_hash, phone)
+            "INSERT INTO users (username, email, password_hash, first_name, last_name, phone) VALUES (%s, %s, %s, %s, %s, %s)",
+            (username, email, password_hash, first_name, last_name, phone)
         )
         conn.commit()
         
@@ -636,26 +639,28 @@ def login():
         if is_json:
             data = request.get_json() or {}
             email = data.get('email', '').strip()
+            phone = data.get('phone', '').strip()
             password = data.get('password', '')
         else:
             email = request.form.get('email', '').strip()
+            phone = request.form.get('phone', '').strip()
             password = request.form.get('password', '')
 
         # Validation
-        if not email or not password:
+        if not email or not phone or not password:
             if is_json:
-                return jsonify({'success': False, 'message': 'Email and password are required'}), 400
-            return render_template('login.html', error="Email and password are required")
+                return jsonify({'success': False, 'message': 'Email, phone, and password are required'}), 400
+            return render_template('login.html', error="Email, phone, and password are required")
 
         # Get user from database
         user = get_user_by_email(email)
 
-        # Verify password
-        if user and check_password_hash(user['password'], password):
-            full_name = user.get('name', '')
+        # Verify password and phone number
+        if user and check_password_hash(user.get('password_hash') or user.get('password', ''), password) and normalize_phone(user.get('phone', '')) == normalize_phone(phone):
+            full_name = user.get('first_name', '') + ' ' + user.get('last_name', '') if 'first_name' in user else user.get('name', '')
             clear_admin_session()
             session['user_id'] = user['id']
-            session['user_name'] = full_name
+            session['user_name'] = full_name.strip()
             session['user_email'] = user['email']
             
             if is_json:
@@ -663,8 +668,8 @@ def login():
             return redirect(url_for('home'))
         else:
             if is_json:
-                return jsonify({'success': False, 'message': 'Invalid email or password'}), 401
-            return render_template('login.html', error="Invalid email or password")
+                return jsonify({'success': False, 'message': 'Invalid email, phone, or password'}), 401
+            return render_template('login.html', error="Invalid email, phone, or password")
 
     return render_template('login.html')
 
@@ -798,9 +803,13 @@ def book_car(car_id):
             is_new_account = user_is_new_account(session['user_email'])
             has_weekend_dates = booking_includes_weekend(pickup, return_dt - timedelta(days=1))
 
-            if is_new_account and has_weekend_dates:
-                promo_discount_amount += base_cost * 0.30
-                discounts_applied.append("New Account Weekend Discount (30%)")
+            if is_new_account:
+                promo_discount_amount += base_cost * 0.20
+                discounts_applied.append("First-time User Discount (20%)")
+
+            if has_weekend_dates:
+                promo_discount_amount += base_cost * 0.10
+                discounts_applied.append("Weekend Discount (Sat & Sun) (10%)")
 
             # Validate and apply promo code
             if promo_code:
@@ -854,20 +863,25 @@ def book_car(car_id):
                 cursor = conn.cursor()
                 car_name = f"{car.get('brand', '')} {car.get('model', '')}".strip()
                 car_image = car.get('image_url') or car.get('image', '')
+                booking_ref = generate_booking_reference()
+                
                 cursor.execute("""
                     INSERT INTO bookings
-                    (user_email, user_name, phone, car_id, car_name, car_image,
-                     pickup_date, return_date, days, base_cost, discount_amount,
+                    (user_id, booking_reference, user_email, user_name, phone, car_id, car_name, car_image,
+                     pickup_date, return_date, start_date, end_date, days, base_cost, discount_amount,
                      total_cost, discounts_applied, promotion_id, status)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                            %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (
+                    session.get('user_id'),
+                    booking_ref,
                     session.get('user_email', ''),
                     session.get('user_name', ''),
                     phone,
                     car_id,
                     car_name,
                     car_image,
+                    pickup_date,
+                    return_date,
                     pickup_date,
                     return_date,
                     days,
@@ -1497,6 +1511,11 @@ def admin_promotions():
     cursor = None
     try:
         cursor = conn.cursor(dictionary=True)
+        
+        # Automatically delete promotions that have passed their deadline
+        today_date = datetime.now().date()
+        cursor.execute("DELETE FROM promotions WHERE active_to < %s", (today_date,))
+        conn.commit()
 
         search = request.args.get('search', '').strip()
         status_filter = request.args.get('status', '').strip()
